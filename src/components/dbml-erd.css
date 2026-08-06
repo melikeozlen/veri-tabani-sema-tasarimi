@@ -17,6 +17,7 @@
   --dbml-green-soft: rgba(61, 155, 110, 0.14);
   --dbml-hover: rgba(139, 148, 158, 0.08);
   --dbml-edge: #5a6a7d;
+  --dbml-edge-active: #3d8fd1;
   --dbml-dot: #3a4554;
   --dbml-shadow: none;
   --dbml-handle-border: #0f1419;
@@ -56,6 +57,7 @@
   --dbml-green-soft: rgba(26, 127, 55, 0.1);
   --dbml-hover: #e8f0fe;
   --dbml-edge: #7293b3;
+  --dbml-edge-active: #2563eb;
   --dbml-dot: #9aa8b8;
   --dbml-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 12px rgba(49, 93, 134, 0.08);
   --dbml-handle-border: #ffffff;
@@ -87,6 +89,7 @@
   --dbml-green-soft: rgba(110, 231, 183, 0.12);
   --dbml-hover: rgba(148, 163, 210, 0.1);
   --dbml-edge: #6b7fad;
+  --dbml-edge-active: #60a5fa;
   --dbml-dot: #3a4568;
   --dbml-shadow: none;
   --dbml-handle-border: #0b1020;
@@ -118,6 +121,7 @@
   --dbml-green-soft: rgba(4, 120, 87, 0.1);
   --dbml-hover: #d9f3ef;
   --dbml-edge: #5f9e96;
+  --dbml-edge-active: #0d9488;
   --dbml-dot: #8fafa9;
   --dbml-shadow: 0 1px 2px rgba(12, 34, 40, 0.05), 0 4px 12px rgba(15, 118, 110, 0.08);
   --dbml-handle-border: #ffffff;
@@ -128,6 +132,70 @@
   --dbml-error-bg: #fef3f2;
   --dbml-error-border: #f97066;
   color-scheme: light;
+}
+
+/* Kurumsal Açık — nötr gri, az renk */
+.dbml-erd-viewer[data-theme="corp-light"] {
+  --dbml-bg: #f7f7f5;
+  --dbml-panel: #ffffff;
+  --dbml-surface: #ffffff;
+  --dbml-surface-2: #f0f0ee;
+  --dbml-border: #d8d8d4;
+  --dbml-text: #2c2c2a;
+  --dbml-text-strong: #1a1a18;
+  --dbml-muted: #6f6f6a;
+  --dbml-accent: #3f3f3c;
+  --dbml-accent-soft: #eeeeec;
+  --dbml-accent-border: rgba(63, 63, 60, 0.35);
+  --dbml-yellow: #6b5d3a;
+  --dbml-yellow-soft: rgba(107, 93, 58, 0.1);
+  --dbml-green: #4a5c4e;
+  --dbml-green-soft: rgba(74, 92, 78, 0.1);
+  --dbml-hover: #eeeeec;
+  --dbml-edge: #8a8a84;
+  --dbml-edge-active: #2563eb;
+  --dbml-dot: #b8b8b2;
+  --dbml-shadow: 0 1px 2px rgba(26, 26, 24, 0.04), 0 3px 10px rgba(26, 26, 24, 0.05);
+  --dbml-handle-border: #ffffff;
+  --dbml-dim: 0.3;
+  --dbml-warn-text: #6b5d3a;
+  --dbml-warn-bg: rgba(107, 93, 58, 0.08);
+  --dbml-error-text: #8a3a3a;
+  --dbml-error-bg: #f6eeee;
+  --dbml-error-border: #d4a8a8;
+  color-scheme: light;
+}
+
+/* Kurumsal Koyu — charcoal, az renk */
+.dbml-erd-viewer[data-theme="corp-dark"] {
+  --dbml-bg: #1c1c1b;
+  --dbml-panel: #242422;
+  --dbml-surface: #2a2a28;
+  --dbml-surface-2: #323230;
+  --dbml-border: #3d3d3a;
+  --dbml-text: #e4e4e0;
+  --dbml-text-strong: #f4f4f0;
+  --dbml-muted: #9a9a94;
+  --dbml-accent: #c8c8c2;
+  --dbml-accent-soft: rgba(200, 200, 194, 0.1);
+  --dbml-accent-border: rgba(200, 200, 194, 0.35);
+  --dbml-yellow: #b8a878;
+  --dbml-yellow-soft: rgba(184, 168, 120, 0.12);
+  --dbml-green: #8fa090;
+  --dbml-green-soft: rgba(143, 160, 144, 0.12);
+  --dbml-hover: rgba(200, 200, 194, 0.08);
+  --dbml-edge: #6e6e68;
+  --dbml-edge-active: #5b9fd4;
+  --dbml-dot: #4a4a46;
+  --dbml-shadow: none;
+  --dbml-handle-border: #1c1c1b;
+  --dbml-dim: 0.22;
+  --dbml-warn-text: #b8a878;
+  --dbml-warn-bg: rgba(184, 168, 120, 0.12);
+  --dbml-error-text: #d4a0a0;
+  --dbml-error-bg: #3a2828;
+  --dbml-error-border: #6a4040;
+  color-scheme: dark;
 }
 
 .dbml-canvas {
@@ -1258,7 +1326,7 @@
 }
 
 .dbml-relation-edge.is-highlighted {
-  stroke: var(--dbml-accent);
+  stroke: var(--dbml-edge-active);
   stroke-width: 2.4;
   opacity: 1;
 }
@@ -1268,7 +1336,7 @@
 }
 
 .dbml-relation-edge__flow {
-  stroke: color-mix(in srgb, var(--dbml-accent) 85%, #ffffff);
+  stroke: color-mix(in srgb, var(--dbml-edge-active) 85%, #ffffff);
   stroke-width: 2.2;
   stroke-dasharray: 7 11;
   opacity: 0.95;
@@ -1314,12 +1382,12 @@
 .dbml-junction.is-highlighted .dbml-junction__stem,
 .dbml-junction.is-highlighted .dbml-junction__crow,
 .dbml-junction.is-highlighted .dbml-junction__one {
-  stroke: var(--dbml-accent);
+  stroke: var(--dbml-edge-active);
 }
 
 .dbml-junction.is-highlighted .dbml-junction__node {
   fill: var(--dbml-panel);
-  stroke: var(--dbml-accent);
+  stroke: var(--dbml-edge-active);
 }
 
 .dbml-junction.is-dimmed {
@@ -1342,7 +1410,7 @@
 }
 
 .dbml-junction__label.is-highlighted {
-  color: var(--dbml-accent);
+  color: var(--dbml-edge-active);
 }
 
 .dbml-junction__label.is-dimmed {
@@ -1367,8 +1435,8 @@
 }
 
 .dbml-cardinality.is-highlighted {
-  border-color: var(--dbml-accent);
-  color: var(--dbml-accent);
+  border-color: var(--dbml-edge-active);
+  color: var(--dbml-edge-active);
 }
 
 .dbml-cardinality.is-dimmed { opacity: 0.08; }
@@ -1411,7 +1479,7 @@
   overflow: hidden;
   border: 0;
   padding: 0;
-  color: var(--dbml-accent);
+  color: var(--dbml-edge-active);
   background: transparent;
   font: inherit;
   font-size: 13px;

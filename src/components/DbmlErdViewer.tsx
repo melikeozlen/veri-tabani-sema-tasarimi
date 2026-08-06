@@ -1161,20 +1161,23 @@ const RelationEdge = memo(function RelationEdge({
 const nodeTypes = { dbmlTable: TableNode };
 const edgeTypes = { dbmlRelation: RelationEdge };
 
-type ThemeId = 'dark' | 'light' | 'night' | 'sea';
+type ThemeId = 'corp-light' | 'corp-dark' | 'dark' | 'light' | 'night' | 'sea';
 
 const THEME_OPTIONS: Array<{
   id: ThemeId;
   label: string;
   scheme: 'dark' | 'light';
+  corporate?: boolean;
   swatchBg: string;
   swatchAccent: string;
   dot: string;
 }> = [
-  { id: 'dark', label: 'Koyu', scheme: 'dark', swatchBg: '#0f1419', swatchAccent: '#3d8fd1', dot: '#3a4554' },
-  { id: 'night', label: 'Gece', scheme: 'dark', swatchBg: '#0b1020', swatchAccent: '#5eead4', dot: '#3a4568' },
-  { id: 'light', label: 'Açık', scheme: 'light', swatchBg: '#fbfcfd', swatchAccent: '#315d86', dot: '#9aa8b8' },
-  { id: 'sea', label: 'Deniz', scheme: 'light', swatchBg: '#f3f8f7', swatchAccent: '#0f766e', dot: '#8fafa9' },
+  { id: 'corp-light', label: 'Nötr Açık', scheme: 'light', corporate: true, swatchBg: '#f7f7f5', swatchAccent: '#3f3f3c', dot: '#b8b8b2' },
+  { id: 'corp-dark', label: 'Nötr Koyu', scheme: 'dark', corporate: true, swatchBg: '#1c1c1b', swatchAccent: '#c8c8c2', dot: '#4a4a46' },
+  { id: 'light', label: 'Slate Açık', scheme: 'light', swatchBg: '#fbfcfd', swatchAccent: '#315d86', dot: '#9aa8b8' },
+  { id: 'dark', label: 'Slate Koyu', scheme: 'dark', swatchBg: '#0f1419', swatchAccent: '#3d8fd1', dot: '#3a4554' },
+  { id: 'sea', label: 'Teal Açık', scheme: 'light', swatchBg: '#f3f8f7', swatchAccent: '#0f766e', dot: '#8fafa9' },
+  { id: 'night', label: 'Indigo Gece', scheme: 'dark', swatchBg: '#0b1020', swatchAccent: '#5eead4', dot: '#3a4568' },
 ];
 
 const THEME_META = Object.fromEntries(THEME_OPTIONS.map((item) => [item.id, item])) as Record<
@@ -1183,11 +1186,22 @@ const THEME_META = Object.fromEntries(THEME_OPTIONS.map((item) => [item.id, item
 >;
 
 function isThemeId(value: string | null): value is ThemeId {
-  return value === 'dark' || value === 'light' || value === 'night' || value === 'sea';
+  return (
+    value === 'corp-light' ||
+    value === 'corp-dark' ||
+    value === 'dark' ||
+    value === 'light' ||
+    value === 'night' ||
+    value === 'sea'
+  );
 }
 
 function isLightScheme(theme: ThemeId): boolean {
   return THEME_META[theme].scheme === 'light';
+}
+
+function isCorporateTheme(theme: ThemeId): boolean {
+  return Boolean(THEME_META[theme].corporate);
 }
 
 // -----------------------------------------------------------------------------
@@ -1219,30 +1233,46 @@ const TABLE_HEADER_PALETTE = [
   '#ca8a04',
 ];
 
+const CORP_HEADER_PALETTE = [
+  '#4a4a46',
+  '#5c5c56',
+  '#3a3a36',
+  '#6a6a64',
+  '#454540',
+  '#585852',
+  '#3f3f3a',
+  '#63635c',
+];
+
 const TABLE_HEADER_COLOR_BY_KEY: Record<string, string> = {
   // örn: org: '#2563eb',
   // örn: crm: '#7c3aed',
 };
 
-function colorForKey(key: string): string {
+function colorForKey(key: string, corporate = false): string {
   const override = TABLE_HEADER_COLOR_BY_KEY[key];
   if (override) return override;
 
+  const palette = corporate ? CORP_HEADER_PALETTE : TABLE_HEADER_PALETTE;
   let hash = 0;
   for (let index = 0; index < key.length; index += 1) {
     hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
   }
-  return TABLE_HEADER_PALETTE[hash % TABLE_HEADER_PALETTE.length];
+  return palette[hash % palette.length];
 }
 
-function headerColorForTable(table: DbmlTable, groupBy: 'schema' | 'tableGroup'): string {
+function headerColorForTable(
+  table: DbmlTable,
+  groupBy: 'schema' | 'tableGroup',
+  corporate = false,
+): string {
   if (groupBy === 'tableGroup') {
-    return colorForKey(table.tableGroup ?? '__ungrouped__');
+    return colorForKey(table.tableGroup ?? '__ungrouped__', corporate);
   }
-  return colorForKey(table.schema ?? '__noschema__');
+  return colorForKey(table.schema ?? '__noschema__', corporate);
 }
 
-function groupTablesBySchema(tables: DbmlTable[]): NavigatorGroup[] {
+function groupTablesBySchema(tables: DbmlTable[], corporate = false): NavigatorGroup[] {
   const groups = new Map<string, DbmlTable[]>();
 
   for (const table of tables) {
@@ -1257,12 +1287,16 @@ function groupTablesBySchema(tables: DbmlTable[]): NavigatorGroup[] {
     .map(([name, schemaTables]) => ({
       id: `schema:${name}`,
       name,
-      color: colorForKey(name === '(şemasız)' ? '__noschema__' : name),
+      color: colorForKey(name === '(şemasız)' ? '__noschema__' : name, corporate),
       tables: [...schemaTables].sort((left, right) => left.name.localeCompare(right.name, 'tr')),
     }));
 }
 
-function groupTablesByTableGroup(tables: DbmlTable[], tableGroups: DbmlTableGroup[]): NavigatorGroup[] {
+function groupTablesByTableGroup(
+  tables: DbmlTable[],
+  tableGroups: DbmlTableGroup[],
+  corporate = false,
+): NavigatorGroup[] {
   const tableMap = new Map(tables.map((table) => [table.id, table]));
   const grouped = new Set<string>();
   const result: NavigatorGroup[] = [];
@@ -1275,7 +1309,7 @@ function groupTablesByTableGroup(tables: DbmlTable[], tableGroups: DbmlTableGrou
     result.push({
       id: `group:${group.name}`,
       name: group.name,
-      color: colorForKey(group.name),
+      color: colorForKey(group.name, corporate),
       tables: groupTables.sort((left, right) => left.name.localeCompare(right.name, 'tr')),
     });
   }
@@ -1285,7 +1319,7 @@ function groupTablesByTableGroup(tables: DbmlTable[], tableGroups: DbmlTableGrou
     result.push({
       id: 'group:__ungrouped__',
       name: '(grupsuz)',
-      color: colorForKey('__ungrouped__'),
+      color: colorForKey('__ungrouped__', corporate),
       tables: [...ungrouped].sort((left, right) => left.name.localeCompare(right.name, 'tr')),
     });
   }
@@ -1603,10 +1637,10 @@ function DbmlErdViewerContent({
   });
   const [dataModalTableId, setDataModalTableId] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeId>(() => {
-    if (typeof window === 'undefined') return 'light';
+    if (typeof window === 'undefined') return 'corp-light';
     const saved = window.localStorage.getItem('dbml-erd-theme');
     if (isThemeId(saved)) return saved;
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'corp-dark' : 'corp-light';
   });
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [viewLocked, setViewLocked] = useState(false);
@@ -1739,10 +1773,11 @@ function DbmlErdViewerContent({
 
   const navigatorGroups = useMemo(() => {
     const tables = nodes.map((node) => node.data.table);
+    const corporate = isCorporateTheme(theme);
     return groupBy === 'tableGroup'
-      ? groupTablesByTableGroup(tables, tableGroups)
-      : groupTablesBySchema(tables);
-  }, [groupBy, nodes, tableGroups]);
+      ? groupTablesByTableGroup(tables, tableGroups, corporate)
+      : groupTablesBySchema(tables, corporate);
+  }, [groupBy, nodes, tableGroups, theme]);
 
   const filteredNavigatorGroups = useMemo(() => {
     if (!normalizedSearch) return navigatorGroups;
@@ -1838,7 +1873,7 @@ function DbmlErdViewerContent({
           dimmed: searchMismatch || relationMismatch || hoverDim,
           searchTerm,
           searchScopes,
-          headerColor: headerColorForTable(node.data.table, groupBy),
+          headerColor: headerColorForTable(node.data.table, groupBy, isCorporateTheme(theme)),
           onOpenTableData: openTableData,
         },
       };
@@ -1857,6 +1892,7 @@ function DbmlErdViewerContent({
     searchTerm,
     selectedTable,
     tableGroupNameById,
+    theme,
   ]);
 
   function downloadSampleCsv() {
