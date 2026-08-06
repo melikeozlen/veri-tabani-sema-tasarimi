@@ -153,7 +153,6 @@ interface RelationEdgeData extends Record<string, unknown> {
   infoPointer?: XYPosition | null;
   showEdgeInfo?: boolean;
   onFocusTable?: (tableId: string) => void;
-  onLabelHoverChange?: (edgeId: string | null) => void;
 }
 
 type RelationFlowEdge = Edge<RelationEdgeData, 'dbmlRelation'>;
@@ -973,9 +972,9 @@ function clampEdgeInfoAboveCursor(
   gap: number,
   flowToScreenPosition: (position: XYPosition) => XYPosition,
   screenToFlowPosition: (position: XYPosition) => XYPosition,
-): XYPosition {
+): { position: XYPosition; placeBelow: boolean } {
   const pane = document.querySelector('.dbml-canvas .react-flow') as HTMLElement | null;
-  if (!pane) return cursorFlow;
+  if (!pane) return { position: cursorFlow, placeBelow: false };
 
   const rect = pane.getBoundingClientRect();
   const pad = 12;
@@ -984,15 +983,17 @@ function clampEdgeInfoAboveCursor(
 
   const minX = rect.left + pad + halfW;
   const maxX = rect.right - pad - halfW;
-  const minY = rect.top + pad + size.height + gap;
-  const maxY = rect.bottom - pad + gap;
+  const x = minX > maxX ? (rect.left + rect.right) / 2 : Math.min(Math.max(cursor.x, minX), maxX);
 
-  const clampedScreen = {
-    x: minX > maxX ? (rect.left + rect.right) / 2 : Math.min(Math.max(cursor.x, minX), maxX),
-    y: minY > maxY ? (rect.top + rect.bottom) / 2 : Math.min(Math.max(cursor.y, minY), maxY),
+  const spaceAbove = cursor.y - rect.top - pad;
+  const spaceBelow = rect.bottom - cursor.y - pad;
+  const need = size.height + gap;
+  const placeBelow = spaceAbove < need && spaceBelow >= spaceAbove;
+
+  return {
+    position: screenToFlowPosition({ x, y: cursor.y }),
+    placeBelow,
   };
-
-  return screenToFlowPosition(clampedScreen);
 }
 
 const EDGE_INFO_GAP = 12;
@@ -1021,12 +1022,8 @@ const RelationEdge = memo(function RelationEdge({
 
   const dimmed = data?.dimmed ?? false;
   const highlighted = data?.highlighted ?? false;
-  const [labelHovered, setLabelHovered] = useState(false);
-  const active = selected || highlighted || labelHovered;
-  const showInfo =
-    Boolean(data) &&
-    data?.showEdgeInfo !== false &&
-    (Boolean(data?.infoVisible) || labelHovered);
+  const active = selected || highlighted;
+  const showInfo = Boolean(data) && data?.showEdgeInfo !== false && Boolean(data?.infoVisible);
   const sourceCardinality = data?.sourceCardinality ?? '1';
   const targetCardinality = data?.targetCardinality ?? 'N';
   const { flowToScreenPosition, screenToFlowPosition } = useReactFlow();
@@ -1035,10 +1032,12 @@ const RelationEdge = memo(function RelationEdge({
   const pointer = data?.infoPointer ?? null;
   const preferred = pointer ?? { x: labelX, y: labelY };
   const [infoPosition, setInfoPosition] = useState<XYPosition>(preferred);
+  const [placeBelow, setPlaceBelow] = useState(false);
 
   useLayoutEffect(() => {
     if (!showInfo) {
       setInfoPosition(preferred);
+      setPlaceBelow(false);
       return;
     }
 
@@ -1046,15 +1045,15 @@ const RelationEdge = memo(function RelationEdge({
     const width = rect?.width && rect.width > 0 ? rect.width : 260;
     const height = rect?.height && rect.height > 0 ? rect.height : 88;
 
-    setInfoPosition(
-      clampEdgeInfoAboveCursor(
-        preferred,
-        { width, height },
-        EDGE_INFO_GAP,
-        flowToScreenPosition,
-        screenToFlowPosition,
-      ),
+    const next = clampEdgeInfoAboveCursor(
+      preferred,
+      { width, height },
+      EDGE_INFO_GAP,
+      flowToScreenPosition,
+      screenToFlowPosition,
     );
+    setInfoPosition(next.position);
+    setPlaceBelow(next.placeBelow);
   }, [
     flowToScreenPosition,
     preferred.x,
@@ -1066,21 +1065,19 @@ const RelationEdge = memo(function RelationEdge({
     viewport.zoom,
   ]);
 
-  function handleLabelEnter() {
-    setLabelHovered(true);
-    data?.onLabelHoverChange?.(id);
-  }
-
-  function handleLabelLeave() {
-    setLabelHovered(false);
-    data?.onLabelHoverChange?.(null);
-  }
-
   function focusTable(tableId: string, event: MouseEvent) {
     event.preventDefault();
     event.stopPropagation();
     data?.onFocusTable?.(tableId);
   }
+
+  function keepPopupOpen(event: { stopPropagation: () => void }) {
+    event.stopPropagation();
+  }
+
+  const infoTransform = placeBelow
+    ? `translate(-50%, ${EDGE_INFO_GAP}px) translate(${infoPosition.x}px, ${infoPosition.y}px)`
+    : `translate(-50%, calc(-100% - ${EDGE_INFO_GAP}px)) translate(${infoPosition.x}px, ${infoPosition.y}px)`;
 
   return (
     <>
@@ -1121,11 +1118,10 @@ const RelationEdge = memo(function RelationEdge({
           <div
             ref={labelRef}
             className="dbml-relation-label nodrag nopan"
-            style={{
-              transform: `translate(-50%, calc(-100% - ${EDGE_INFO_GAP}px)) translate(${infoPosition.x}px, ${infoPosition.y}px)`,
-            }}
-            onMouseEnter={handleLabelEnter}
-            onMouseLeave={handleLabelLeave}
+            style={{ transform: infoTransform }}
+            onClick={keepPopupOpen}
+            onMouseDown={keepPopupOpen}
+            onPointerDown={keepPopupOpen}
           >
             <div className="dbml-relation-label__row">
               <span className="dbml-relation-label__role">Başlangıç</span>
@@ -1207,6 +1203,47 @@ function isCorporateTheme(theme: ThemeId): boolean {
 // -----------------------------------------------------------------------------
 // ELK auto layout
 // -----------------------------------------------------------------------------
+
+type LayoutDensity = 'normal' | 'horizontal' | 'vertical';
+
+const LAYOUT_DENSITY_PRESETS: Record<
+  LayoutDensity,
+  {
+    label: string;
+    title: string;
+    betweenLayers: number;
+    nodeNode: number;
+    edgeNode: number;
+    padding: number;
+  }
+> = {
+  normal: {
+    label: 'Normal',
+    title: 'Normal dizilim',
+    betweenLayers: 180,
+    nodeNode: 90,
+    edgeNode: 32,
+    padding: 70,
+  },
+  horizontal: {
+    label: 'Yatay',
+    title: 'Yatay açık',
+    betweenLayers: 660,
+    nodeNode: 90,
+    edgeNode: 56,
+    padding: 130,
+  },
+  vertical: {
+    label: 'Dikey',
+    title: 'Dikey açık',
+    betweenLayers: 180,
+    nodeNode: 200,
+    edgeNode: 48,
+    padding: 110,
+  },
+};
+
+const LAYOUT_DENSITY_OPTIONS: LayoutDensity[] = ['normal', 'horizontal', 'vertical'];
 
 const elk = new ELK();
 const NODE_WIDTH = 360;
@@ -1425,7 +1462,10 @@ function EditIcon() {
   );
 }
 
-async function buildFlowGraph(parsed: ParseResult): Promise<{
+async function buildFlowGraph(
+  parsed: ParseResult,
+  density: LayoutDensity = 'normal',
+): Promise<{
   nodes: TableFlowNode[];
   edges: RelationFlowEdge[];
 }> {
@@ -1460,6 +1500,8 @@ async function buildFlowGraph(parsed: ParseResult): Promise<{
     },
   }));
 
+  const spacing = LAYOUT_DENSITY_PRESETS[density];
+
   const graph = await elk.layout({
     id: 'root',
     layoutOptions: {
@@ -1468,10 +1510,10 @@ async function buildFlowGraph(parsed: ParseResult): Promise<{
       'elk.edgeRouting': 'ORTHOGONAL',
       'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
       'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '180',
-      'elk.spacing.nodeNode': '90',
-      'elk.spacing.edgeNode': '32',
-      'elk.padding': '[top=70,left=70,bottom=70,right=70]',
+      'elk.layered.spacing.nodeNodeBetweenLayers': String(spacing.betweenLayers),
+      'elk.spacing.nodeNode': String(spacing.nodeNode),
+      'elk.spacing.edgeNode': String(spacing.edgeNode),
+      'elk.padding': `[top=${spacing.padding},left=${spacing.padding},bottom=${spacing.padding},right=${spacing.padding}]`,
     },
     children: parsed.tables.map((table) => ({
       id: table.id,
@@ -1623,8 +1665,15 @@ function DbmlErdViewerContent({
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [hoveredTableId, setHoveredTableId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
-  const [hoveredEdgePointer, setHoveredEdgePointer] = useState<XYPosition | null>(null);
+  const [pinnedEdgeId, setPinnedEdgeId] = useState<string | null>(null);
+  const [pinnedEdgePointer, setPinnedEdgePointer] = useState<XYPosition | null>(null);
   const [layoutVersion, setLayoutVersion] = useState(0);
+  const [layoutDensity, setLayoutDensity] = useState<LayoutDensity>(() => {
+    if (typeof window === 'undefined') return 'normal';
+    const saved = window.localStorage.getItem('dbml-erd-layout-density');
+    if (saved === 'normal' || saved === 'horizontal' || saved === 'vertical') return saved;
+    return 'normal';
+  });
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -1654,13 +1703,6 @@ function DbmlErdViewerContent({
   const viewerRef = useRef<HTMLElement | null>(null);
   const { fitView, fitBounds, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
 
-  const captureHoveredEdgePointer = useCallback(
-    (event: { clientX: number; clientY: number }) => {
-      setHoveredEdgePointer(screenToFlowPosition({ x: event.clientX, y: event.clientY }));
-    },
-    [screenToFlowPosition],
-  );
-
   useEffect(() => {
     function onFullscreenChange() {
       setIsFullscreen(Boolean(document.fullscreenElement));
@@ -1682,6 +1724,10 @@ function DbmlErdViewerContent({
       // Tarayıcı engellerse sessizce geç.
     }
   }
+
+  useEffect(() => {
+    window.localStorage.setItem('dbml-erd-layout-density', layoutDensity);
+  }, [layoutDensity]);
 
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-theme', theme);
@@ -1756,7 +1802,7 @@ function DbmlErdViewerContent({
         const parsed = parseDbml(dbml);
         if (parsed.tables.length === 0) throw new Error('DBML içinde render edilebilir bir Table bloğu bulunamadı.');
 
-        const graph = await buildFlowGraph(parsed);
+        const graph = await buildFlowGraph(parsed, layoutDensity);
         if (cancelled) return;
 
         setWarnings(parsed.warnings);
@@ -1764,15 +1810,6 @@ function DbmlErdViewerContent({
         setTableGroups(parsed.tableGroups);
         setNodes(graph.nodes);
         setEdges(graph.edges);
-        setSelectedTable(null);
-        setHoveredTableId(null);
-        setHoveredEdgeId(null);
-        setSearchTerm('');
-        setSearchScopeFilter('all');
-        setCollapsedGroups(new Set());
-        setHiddenTableIds(new Set());
-        setGroupByOpen(false);
-        setDataModalTableId(null);
 
         window.requestAnimationFrame(() => {
           fitView({ padding: 0.12, duration: 500, maxZoom: 1 });
@@ -1791,7 +1828,21 @@ function DbmlErdViewerContent({
     return () => {
       cancelled = true;
     };
-  }, [dbml, fitView, layoutVersion, setEdges, setNodes]);
+  }, [dbml, fitView, layoutDensity, layoutVersion, setEdges, setNodes]);
+
+  useEffect(() => {
+    setSelectedTable(null);
+    setHoveredTableId(null);
+    setHoveredEdgeId(null);
+    setPinnedEdgeId(null);
+    setPinnedEdgePointer(null);
+    setSearchTerm('');
+    setSearchScopeFilter('all');
+    setCollapsedGroups(new Set());
+    setHiddenTableIds(new Set());
+    setGroupByOpen(false);
+    setDataModalTableId(null);
+  }, [dbml]);
 
   const normalizedSearch = searchTerm.trim().toLocaleLowerCase('tr-TR');
 
@@ -1846,8 +1897,9 @@ function DbmlErdViewerContent({
   }, [edges, selectedTable]);
 
   const hoverConnectedIds = useMemo(() => {
-    if (hoveredEdgeId) {
-      const edge = edges.find((item) => item.id === hoveredEdgeId);
+    const focusEdgeId = pinnedEdgeId ?? hoveredEdgeId;
+    if (focusEdgeId) {
+      const edge = edges.find((item) => item.id === focusEdgeId);
       if (edge) return new Set<string>([edge.source, edge.target]);
     }
 
@@ -1858,7 +1910,7 @@ function DbmlErdViewerContent({
       if (edge.target === hoveredTableId) ids.add(edge.source);
     }
     return ids;
-  }, [edges, hoveredEdgeId, hoveredTableId]);
+  }, [edges, hoveredEdgeId, hoveredTableId, pinnedEdgeId]);
 
   const openTableData = useCallback((tableId: string) => {
     setDataModalTableId(tableId);
@@ -1885,7 +1937,7 @@ function DbmlErdViewerContent({
           tableGroupNameById.get(node.id),
         );
       const relationMismatch = selectedTable !== null && !connectedTableIds.has(node.id);
-      const hoverActive = hoveredTableId !== null || hoveredEdgeId !== null;
+      const hoverActive = hoveredTableId !== null || hoveredEdgeId !== null || pinnedEdgeId !== null;
       const hoverDim = hoverActive && !selectedTable && !hoverConnectedIds.has(node.id);
       const isHidden = hiddenTableIds.has(node.id);
 
@@ -1912,6 +1964,7 @@ function DbmlErdViewerContent({
     nodes,
     normalizedSearch,
     openTableData,
+    pinnedEdgeId,
     searchScopes,
     searchTerm,
     selectedTable,
@@ -1957,25 +2010,25 @@ function DbmlErdViewerContent({
     (tableId: string) => {
       setSelectedTable(tableId);
       setHoveredEdgeId(null);
+      setPinnedEdgeId(null);
+      setPinnedEdgePointer(null);
       focusTables([tableId]);
     },
     [focusTables],
   );
 
-  const handleEdgeLabelHoverChange = useCallback((edgeId: string | null) => {
-    if (edgeLeaveTimerRef.current !== null) {
-      window.clearTimeout(edgeLeaveTimerRef.current);
-      edgeLeaveTimerRef.current = null;
-    }
-    if (edgeId) setHoveredEdgeId(edgeId);
-    else {
-      edgeLeaveTimerRef.current = window.setTimeout(() => {
-        setHoveredEdgeId(null);
-        setHoveredEdgePointer(null);
-        edgeLeaveTimerRef.current = null;
-      }, 120);
-    }
+  const clearPinnedEdge = useCallback(() => {
+    setPinnedEdgeId(null);
+    setPinnedEdgePointer(null);
   }, []);
+
+  const pinEdgeAtEvent = useCallback(
+    (edgeId: string, event: { clientX: number; clientY: number }) => {
+      setPinnedEdgeId(edgeId);
+      setPinnedEdgePointer(screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+    },
+    [screenToFlowPosition],
+  );
 
   const visibleEdges = useMemo(() => {
     return edges.map((edge) => {
@@ -1985,12 +2038,13 @@ function DbmlErdViewerContent({
       const targetNode = visibleNodes.find((node) => node.id === edge.target);
       const searchDimmed = Boolean(sourceNode?.data.dimmed && targetNode?.data.dimmed);
       const highlighted =
+        pinnedEdgeId === edge.id ||
         hoveredEdgeId === edge.id ||
         (hoveredTableId !== null &&
           (edge.source === hoveredTableId || edge.target === hoveredTableId)) ||
         (selectedTable !== null &&
           (edge.source === selectedTable || edge.target === selectedTable));
-      const infoVisible = hoveredEdgeId === edge.id;
+      const infoVisible = pinnedEdgeId === edge.id;
 
       return {
         ...edge,
@@ -2000,19 +2054,18 @@ function DbmlErdViewerContent({
           dimmed: relationMismatch || (searchDimmed && !highlighted),
           highlighted,
           infoVisible,
-          infoPointer: infoVisible ? hoveredEdgePointer : null,
+          infoPointer: infoVisible ? pinnedEdgePointer : null,
           showEdgeInfo,
           onFocusTable: selectAndFocusTable,
-          onLabelHoverChange: handleEdgeLabelHoverChange,
         },
       };
     });
   }, [
     edges,
-    handleEdgeLabelHoverChange,
     hoveredEdgeId,
-    hoveredEdgePointer,
     hoveredTableId,
+    pinnedEdgeId,
+    pinnedEdgePointer,
     selectAndFocusTable,
     selectedTable,
     showEdgeInfo,
@@ -2431,7 +2484,7 @@ function DbmlErdViewerContent({
               <span className="dbml-edge-info-toggle__text">
                 <span className="dbml-edge-info-toggle__title">Çizgi bilgisi</span>
                 <span className="dbml-edge-info-toggle__hint">
-                  {showEdgeInfo ? 'Üzerine gelince info açık' : 'Üzerine gelince info kapalı'}
+                  {showEdgeInfo ? 'Tıklayınca info açık' : 'Tıklayınca info kapalı'}
                 </span>
               </span>
               <span className="dbml-edge-info-toggle__switch" aria-hidden="true">
@@ -2474,16 +2527,25 @@ function DbmlErdViewerContent({
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          onNodeClick={(_, node) => setSelectedTable((current) => (current === node.id ? null : node.id))}
+          onNodeClick={(_, node) => {
+            clearPinnedEdge();
+            setSelectedTable((current) => (current === node.id ? null : node.id));
+          }}
           onNodeMouseEnter={(_, node) => setHoveredTableId(node.id)}
           onNodeMouseLeave={() => setHoveredTableId(null)}
-          onEdgeMouseEnter={(event, edge) => {
+          onEdgeClick={(event, edge) => {
+            if (!showEdgeInfo) {
+              clearPinnedEdge();
+              return;
+            }
+            pinEdgeAtEvent(edge.id, event);
+          }}
+          onEdgeMouseEnter={(_event, edge) => {
             if (edgeLeaveTimerRef.current !== null) {
               window.clearTimeout(edgeLeaveTimerRef.current);
               edgeLeaveTimerRef.current = null;
             }
             setHoveredEdgeId(edge.id);
-            captureHoveredEdgePointer(event);
           }}
           onEdgeMouseMove={(_event, edge) => {
             if (edgeLeaveTimerRef.current !== null) {
@@ -2495,14 +2557,12 @@ function DbmlErdViewerContent({
           onEdgeMouseLeave={() => {
             edgeLeaveTimerRef.current = window.setTimeout(() => {
               setHoveredEdgeId(null);
-              setHoveredEdgePointer(null);
               edgeLeaveTimerRef.current = null;
             }, 160);
           }}
           onPaneClick={() => {
             setSelectedTable(null);
-            setHoveredEdgeId(null);
-            setHoveredEdgePointer(null);
+            clearPinnedEdge();
           }}
           onMouseDown={(event) => {
             if (viewLocked) return;
@@ -2634,6 +2694,20 @@ function DbmlErdViewerContent({
             </div>
 
             <div className="dbml-toolbar__actions">
+              <div className="dbml-density" role="group" aria-label="Yerleşim sıklığı">
+                {LAYOUT_DENSITY_OPTIONS.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    className={`dbml-density__button${layoutDensity === option ? ' is-active' : ''}`}
+                    aria-pressed={layoutDensity === option}
+                    onClick={() => setLayoutDensity(option)}
+                    title={LAYOUT_DENSITY_PRESETS[option].title}
+                  >
+                    {LAYOUT_DENSITY_PRESETS[option].label}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
                 className="dbml-toolbar__button"

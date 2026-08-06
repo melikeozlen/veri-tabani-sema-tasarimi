@@ -1673,6 +1673,40 @@
   white-space: nowrap;
 }
 
+.dbml-density {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 2px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 8px;
+  background: var(--dbml-surface-2);
+}
+
+.dbml-density__button {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--dbml-muted);
+  background: transparent;
+  font-size: 11px;
+  font-weight: 650;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dbml-density__button:hover {
+  color: var(--dbml-text-strong);
+}
+
+.dbml-density__button.is-active {
+  color: var(--dbml-text-strong);
+  background: var(--dbml-panel);
+  box-shadow: var(--dbml-shadow);
+}
+
 .dbml-toolbar__button:hover {
   color: var(--dbml-text-strong);
   background: var(--dbml-hover);
@@ -1987,6 +2021,15 @@
   .dbml-toolbar__actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .dbml-density {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+  }
+
+  .dbml-density__button {
+    flex: 1;
   }
 
   .dbml-toolbar__button--primary {
