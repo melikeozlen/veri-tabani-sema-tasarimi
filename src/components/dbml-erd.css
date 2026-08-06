@@ -1516,8 +1516,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  width: min(980px, calc(100% - 24px));
   margin-top: 12px;
-  padding: 8px 10px 8px 14px;
+  padding: 8px 12px 8px 16px;
   border: 1px solid var(--dbml-border);
   border-radius: 8px;
   background: var(--dbml-panel);
@@ -1526,6 +1527,7 @@
 
 .dbml-toolbar__title {
   min-width: 0;
+  flex: 1 1 auto;
   display: flex;
   align-items: baseline;
   gap: 10px;
@@ -1537,12 +1539,13 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  flex: 0 0 auto;
 }
 
 .dbml-toolbar h1 {
   overflow: hidden;
   margin: 0;
-  max-width: 420px;
+  max-width: min(560px, 100%);
   color: var(--dbml-text-strong);
   font-size: 13px;
   font-weight: 700;
@@ -1552,7 +1555,7 @@
 
 .dbml-toolbar__file {
   overflow: hidden;
-  max-width: 160px;
+  max-width: 240px;
   color: var(--dbml-muted);
   font-size: 11px;
   text-overflow: ellipsis;
@@ -1563,6 +1566,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .dbml-search {
