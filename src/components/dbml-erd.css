@@ -198,6 +198,74 @@
   color-scheme: dark;
 }
 
+/* Studio — dengeli koyu menü + yumuşak açık canvas */
+.dbml-erd-viewer[data-theme="split"] {
+  --dbml-bg: #d9dee6;
+  --dbml-panel: #eceff3;
+  --dbml-surface: #f4f6f8;
+  --dbml-surface-2: #e4e8ee;
+  --dbml-border: #b8c1ce;
+  --dbml-text: #323b48;
+  --dbml-text-strong: #222a36;
+  --dbml-muted: #6e7a8b;
+  --dbml-accent: #556980;
+  --dbml-accent-soft: #dde5ee;
+  --dbml-accent-border: rgba(85, 105, 128, 0.36);
+  --dbml-yellow: #84703a;
+  --dbml-yellow-soft: rgba(132, 112, 58, 0.1);
+  --dbml-green: #3a6a4c;
+  --dbml-green-soft: rgba(58, 106, 76, 0.1);
+  --dbml-hover: #dde5ee;
+  --dbml-edge: #7a8b9e;
+  --dbml-edge-active: #456f9c;
+  --dbml-dot: #a8b3c2;
+  --dbml-shadow: 0 1px 2px rgba(34, 42, 54, 0.04), 0 3px 10px rgba(34, 42, 54, 0.05);
+  --dbml-handle-border: #f4f6f8;
+  --dbml-dim: 0.38;
+  --dbml-warn-text: #84703a;
+  --dbml-warn-bg: rgba(132, 112, 58, 0.08);
+  --dbml-error-text: #8f454e;
+  --dbml-error-bg: #f0e8e9;
+  --dbml-error-border: #c9a4a9;
+  color-scheme: light;
+}
+
+.dbml-erd-viewer[data-theme="split"] .dbml-side {
+  --dbml-bg: #3a4150;
+  --dbml-panel: #434b5a;
+  --dbml-surface: #4c5566;
+  --dbml-surface-2: #565f70;
+  --dbml-border: #5c6678;
+  --dbml-text: #e2e6ec;
+  --dbml-text-strong: #f2f4f7;
+  --dbml-muted: #a4adb8;
+  --dbml-accent: #a8bdd2;
+  --dbml-accent-soft: rgba(168, 189, 210, 0.14);
+  --dbml-accent-border: rgba(168, 189, 210, 0.36);
+  --dbml-hover: rgba(168, 189, 210, 0.1);
+  --dbml-shadow: none;
+  --dbml-warn-text: #d0c294;
+  --dbml-warn-bg: rgba(208, 194, 148, 0.12);
+  --dbml-error-text: #dcb0b6;
+  --dbml-error-bg: #4a3840;
+  --dbml-error-border: #6e5058;
+  color: var(--dbml-text);
+  background: var(--dbml-bg);
+  border-color: var(--dbml-border);
+  color-scheme: dark;
+}
+
+.dbml-erd-viewer[data-theme="split"] .dbml-rail-toggle {
+  --dbml-panel: #434b5a;
+  --dbml-border: #5c6678;
+  --dbml-text: #e2e6ec;
+  --dbml-text-strong: #f2f4f7;
+  --dbml-hover: rgba(168, 189, 210, 0.1);
+  color: var(--dbml-text);
+  background: var(--dbml-panel);
+  border-color: var(--dbml-border);
+}
+
 .dbml-canvas {
   position: relative;
   flex: 1 1 auto;

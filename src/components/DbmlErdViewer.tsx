@@ -1157,7 +1157,7 @@ const RelationEdge = memo(function RelationEdge({
 const nodeTypes = { dbmlTable: TableNode };
 const edgeTypes = { dbmlRelation: RelationEdge };
 
-type ThemeId = 'corp-light' | 'corp-dark' | 'dark' | 'light' | 'night' | 'sea';
+type ThemeId = 'corp-light' | 'corp-dark' | 'dark' | 'light' | 'night' | 'sea' | 'split';
 
 const THEME_OPTIONS: Array<{
   id: ThemeId;
@@ -1174,6 +1174,7 @@ const THEME_OPTIONS: Array<{
   { id: 'dark', label: 'Slate Koyu', scheme: 'dark', swatchBg: '#0f1419', swatchAccent: '#3d8fd1', dot: '#3a4554' },
   { id: 'sea', label: 'Teal Açık', scheme: 'light', swatchBg: '#f3f8f7', swatchAccent: '#0f766e', dot: '#8fafa9' },
   { id: 'night', label: 'Indigo Gece', scheme: 'dark', swatchBg: '#0b1020', swatchAccent: '#5eead4', dot: '#3a4568' },
+  { id: 'split', label: 'Studio', scheme: 'light', swatchBg: '#d9dee6', swatchAccent: '#434b5a', dot: '#a8b3c2' },
 ];
 
 const THEME_META = Object.fromEntries(THEME_OPTIONS.map((item) => [item.id, item])) as Record<
@@ -1188,7 +1189,8 @@ function isThemeId(value: string | null): value is ThemeId {
     value === 'dark' ||
     value === 'light' ||
     value === 'night' ||
-    value === 'sea'
+    value === 'sea' ||
+    value === 'split'
   );
 }
 
