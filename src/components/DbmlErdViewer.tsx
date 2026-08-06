@@ -4,6 +4,7 @@ import {
   BackgroundVariant,
   BaseEdge,
   Controls,
+  ControlButton,
   EdgeLabelRenderer,
   Handle,
   MiniMap,
@@ -22,7 +23,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
 
 // -----------------------------------------------------------------------------
 // DBML model types
@@ -30,6 +31,22 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEve
 
 type Cardinality = '1' | 'N';
 type RelationOperator = '>' | '<' | '-' | '<>';
+type SearchScope = 'schema' | 'table' | 'column';
+
+const ALL_SEARCH_SCOPES: SearchScope[] = ['schema', 'table', 'column'];
+
+type SearchScopeFilter = SearchScope | 'all';
+
+const SEARCH_SCOPE_OPTIONS: Array<{ id: SearchScopeFilter; label: string }> = [
+  { id: 'all', label: 'Tümü' },
+  { id: 'schema', label: 'Şema adı' },
+  { id: 'table', label: 'Tablo adı' },
+  { id: 'column', label: 'Kolon adı' },
+];
+
+function scopesFromFilter(filter: SearchScopeFilter): SearchScope[] {
+  return filter === 'all' ? [...ALL_SEARCH_SCOPES] : [filter];
+}
 
 interface FieldSettings {
   primaryKey: boolean;
@@ -60,7 +77,13 @@ interface DbmlTable {
   alias?: string;
   fullName: string;
   note?: string;
+  tableGroup?: string;
   fields: DbmlField[];
+}
+
+interface DbmlTableGroup {
+  name: string;
+  members: string[];
 }
 
 interface RefEndpoint {
@@ -82,6 +105,7 @@ interface DbmlRelation {
 interface ParseResult {
   tables: DbmlTable[];
   enums: DbmlEnum[];
+  tableGroups: DbmlTableGroup[];
   relations: DbmlRelation[];
   warnings: string[];
 }
@@ -91,6 +115,9 @@ interface TableNodeData extends Record<string, unknown> {
   foreignKeyFields: string[];
   dimmed: boolean;
   searchTerm: string;
+  searchScopes: SearchScope[];
+  headerColor: string;
+  onOpenTableData?: (tableId: string) => void;
 }
 
 type TableFlowNode = Node<TableNodeData, 'dbmlTable'>;
@@ -99,10 +126,15 @@ interface RelationEdgeData extends Record<string, unknown> {
   sourceCardinality: Cardinality;
   targetCardinality: Cardinality;
   label: string;
-  sourceLabel: string;
-  targetLabel: string;
+  sourceTable: string;
+  targetTable: string;
+  sourceField: string;
+  targetField: string;
   dimmed: boolean;
   highlighted: boolean;
+  showEdgeInfo?: boolean;
+  onFocusTable?: (tableId: string) => void;
+  onLabelHoverChange?: (edgeId: string | null) => void;
 }
 
 type RelationFlowEdge = Edge<RelationEdgeData, 'dbmlRelation'>;
@@ -112,6 +144,8 @@ export interface DbmlSource {
   name: string;
   label: string;
   content: string;
+  kind?: 'local' | 'upload' | 'link';
+  url?: string;
 }
 
 export interface DbmlErdViewerProps {
@@ -122,15 +156,17 @@ export interface DbmlErdViewerProps {
   className?: string;
 }
 
-interface SchemaGroup {
-  schema: string;
+interface NavigatorGroup {
+  id: string;
+  name: string;
+  color: string;
   tables: DbmlTable[];
 }
 
 // -----------------------------------------------------------------------------
 // Lightweight DBML parser
 // Supports the constructs used by the supplied CRM model:
-// Table, Enum, table notes, field settings, standalone Ref and inline ref.
+// Table, Enum, TableGroup, table notes, field settings, standalone Ref and inline ref.
 // -----------------------------------------------------------------------------
 
 function unquote(value: string): string {
@@ -190,7 +226,7 @@ function stripComments(source: string): string {
 }
 
 interface NamedBlock {
-  kind: 'Table' | 'Enum';
+  kind: 'Table' | 'Enum' | 'TableGroup';
   name: string;
   alias?: string;
   body: string;
@@ -230,7 +266,8 @@ function findClosingBrace(source: string, openingIndex: number): number {
 
 function extractNamedBlocks(source: string): NamedBlock[] {
   const blocks: NamedBlock[] = [];
-  const pattern = /\b(Table|Enum)\s+("(?:\\.|[^"])+"|[\w.-]+)(?:\s+as\s+("(?:\\.|[^"])+"|[\w.-]+))?\s*\{/g;
+  const pattern =
+    /\b(TableGroup|Table|Enum)\s+("(?:\\.|[^"])+"|[\w.-]+)(?:\s+as\s+("(?:\\.|[^"])+"|[\w.-]+))?\s*\{/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(source)) !== null) {
@@ -239,7 +276,7 @@ function extractNamedBlocks(source: string): NamedBlock[] {
     if (closingIndex < 0) break;
 
     blocks.push({
-      kind: match[1] as 'Table' | 'Enum',
+      kind: match[1] as 'TableGroup' | 'Table' | 'Enum',
       name: unquote(match[2]),
       alias: match[3] ? unquote(match[3]) : undefined,
       body: source.slice(openingIndex + 1, closingIndex),
@@ -567,7 +604,29 @@ function parseDbml(source: string): ParseResult {
       if (enumValues) field.enumValues = enumValues;
     }
   }
+
   const warnings: string[] = [];
+  const tableGroups: DbmlTableGroup[] = [];
+
+  for (const block of blocks.filter((item) => item.kind === 'TableGroup')) {
+    const members: string[] = [];
+    for (const rawLine of block.body.split(/\r?\n/)) {
+      const line = rawLine.trim().replace(/,$/, '');
+      if (!line || /^Note\s*:/i.test(line) || line.startsWith("'''")) continue;
+      const identifier = readFirstIdentifier(line);
+      if (!identifier) continue;
+      const resolved = resolveTableName(identifier.identifier, tables);
+      if (!resolved) {
+        warnings.push(`TableGroup "${block.name}" içinde tablo bulunamadı: ${identifier.identifier}`);
+        continue;
+      }
+      members.push(resolved);
+      const table = tables.find((item) => item.id === resolved);
+      if (table && !table.tableGroup) table.tableGroup = block.name;
+    }
+    tableGroups.push({ name: block.name, members });
+  }
+
   const rawRelations: Array<{
     left: RefEndpoint;
     right: RefEndpoint;
@@ -661,7 +720,7 @@ function parseDbml(source: string): ParseResult {
     relations.push(normalizeRelation(left, rawRelation.operator, right, `relation-${index}`));
   });
 
-  return { tables, enums, relations, warnings };
+  return { tables, enums, tableGroups, relations, warnings };
 }
 
 // -----------------------------------------------------------------------------
@@ -672,13 +731,62 @@ function badgeClass(kind: 'pk' | 'fk' | 'nn' | 'uq' | 'ai'): string {
   return `dbml-badge dbml-badge--${kind}`;
 }
 
+function sampleValueForField(field: DbmlField, rowIndex: number): string {
+  const type = field.type.toLocaleLowerCase('tr-TR');
+  const name = field.name.toLocaleLowerCase('tr-TR');
+
+  if (field.enumValues && field.enumValues.length > 0) {
+    return field.enumValues[rowIndex % field.enumValues.length];
+  }
+
+  if (field.settings.primaryKey || name === 'id' || name.endsWith('_id')) {
+    return String(rowIndex + 1);
+  }
+
+  if (/(bool|boolean)/.test(type)) return rowIndex % 2 === 0 ? 'true' : 'false';
+  if (/(int|bigint|smallint|serial|numeric|decimal|float|double|real)/.test(type)) {
+    return String((rowIndex + 1) * 10);
+  }
+  if (/(uuid)/.test(type)) {
+    return `00000000-0000-4000-8000-00000000000${rowIndex}`;
+  }
+  if (/(timestamp|timestamptz|datetime|date)/.test(type)) {
+    return rowIndex === 0 ? 'null' : `2024-0${(rowIndex % 9) + 1}-15`;
+  }
+  if (/(json|jsonb)/.test(type)) return '{"ok":true}';
+  if (name.includes('email')) return `user${rowIndex + 1}@example.com`;
+  if (name.includes('name') || name.includes('title')) {
+    return ['Alice', 'Bob', 'Candice', 'David'][rowIndex % 4];
+  }
+  if (name.includes('status') || name.includes('role')) {
+    return ['active', 'pending', 'archived', 'draft'][rowIndex % 4];
+  }
+  if (/(text|varchar|char|string|citext)/.test(type)) return `örnek_${rowIndex + 1}`;
+
+  return rowIndex === 3 ? 'null' : `değer_${rowIndex + 1}`;
+}
+
+function buildSampleRows(table: DbmlTable, rowCount = 4): Array<Record<string, string>> {
+  return Array.from({ length: rowCount }, (_, rowIndex) => {
+    const row: Record<string, string> = {};
+    for (const field of table.fields) {
+      row[field.name] = sampleValueForField(field, rowIndex);
+    }
+    return row;
+  });
+}
+
 const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
-  const { table, foreignKeyFields, dimmed, searchTerm } = data;
+  const { table, foreignKeyFields, dimmed, searchTerm, searchScopes, headerColor, onOpenTableData } = data;
   const normalizedSearch = searchTerm.trim().toLocaleLowerCase('tr-TR');
+  const highlightColumns = normalizedSearch.length > 0 && searchScopes.includes('column');
 
   return (
     <article className={`dbml-table-node${dimmed ? ' is-dimmed' : ''}`}>
-      <header className="dbml-table-node__header">
+      <header
+        className="dbml-table-node__header"
+        style={{ ['--header-bg' as string]: headerColor, ['--header-fg' as string]: '#ffffff' }}
+      >
         <div className="dbml-table-node__heading">
           {table.schema && <div className="dbml-table-node__schema">{table.schema}</div>}
           <div className="dbml-table-node__title-row">
@@ -696,6 +804,21 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
                 </span>
               </span>
             )}
+            <button
+              type="button"
+              className="dbml-table-data-icon nodrag nopan"
+              aria-label="Tablo verisini görüntüle"
+              title="Tablo verisini görüntüle"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenTableData?.(table.id);
+              }}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <rect x="2" y="2.5" width="12" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                <path d="M2 5.5h12M6 5.5v8" fill="none" stroke="currentColor" strokeWidth="1.4" />
+              </svg>
+            </button>
           </div>
         </div>
         <span className="dbml-table-node__count">{table.fields.length}</span>
@@ -705,7 +828,7 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
         {table.fields.map((field) => {
           const isForeignKey = foreignKeyFields.includes(field.name);
           const isMatch =
-            normalizedSearch.length > 0 &&
+            highlightColumns &&
             `${field.name} ${field.type}`.toLocaleLowerCase('tr-TR').includes(normalizedSearch);
 
           return (
@@ -756,6 +879,69 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
   );
 });
 
+function JunctionMarker({
+  x,
+  y,
+  position,
+  cardinality,
+  active,
+  dimmed,
+}: {
+  x: number;
+  y: number;
+  position: Position;
+  cardinality: Cardinality;
+  active: boolean;
+  dimmed: boolean;
+}) {
+  const isMany = cardinality === 'N';
+  const rotation =
+    position === Position.Right ? 180 : position === Position.Top ? 90 : position === Position.Bottom ? -90 : 0;
+  const labelOffset =
+    position === Position.Left
+      ? { x: -18, y: -16 }
+      : position === Position.Right
+        ? { x: 18, y: -16 }
+        : position === Position.Top
+          ? { x: 0, y: -22 }
+          : { x: 0, y: 18 };
+
+  return (
+    <>
+      <div
+        className={`dbml-junction nodrag nopan${active ? ' is-highlighted' : ''}${dimmed ? ' is-dimmed' : ''}`}
+        style={{
+          transform: `translate(-50%, -50%) translate(${x}px, ${y}px) rotate(${rotation}deg)`,
+        }}
+      >
+        <svg className="dbml-junction__svg" viewBox="0 0 28 20" width="28" height="20" aria-hidden="true">
+          {isMany ? (
+            <>
+              <path d="M2 10 H12" className="dbml-junction__stem" />
+              <path d="M12 10 L22 3 M12 10 L22 10 M12 10 L22 17" className="dbml-junction__crow" />
+              <circle cx="12" cy="10" r="3.2" className="dbml-junction__node" />
+            </>
+          ) : (
+            <>
+              <path d="M2 10 H18" className="dbml-junction__stem" />
+              <path d="M18 4 V16" className="dbml-junction__one" />
+              <circle cx="12" cy="10" r="3.2" className="dbml-junction__node" />
+            </>
+          )}
+        </svg>
+      </div>
+      <span
+        className={`dbml-junction__label nodrag nopan${active ? ' is-highlighted' : ''}${dimmed ? ' is-dimmed' : ''}`}
+        style={{
+          transform: `translate(-50%, -50%) translate(${x + labelOffset.x}px, ${y + labelOffset.y}px)`,
+        }}
+      >
+        {isMany ? '0..*' : '1'}
+      </span>
+    </>
+  );
+}
+
 const RelationEdge = memo(function RelationEdge({
   id,
   sourceX,
@@ -775,19 +961,31 @@ const RelationEdge = memo(function RelationEdge({
     targetY,
     targetPosition,
     borderRadius: 18,
-    offset: 24,
+    offset: 28,
   });
 
-  const distance = Math.max(Math.hypot(targetX - sourceX, targetY - sourceY), 1);
-  const unitX = (targetX - sourceX) / distance;
-  const unitY = (targetY - sourceY) / distance;
-  const sourceBadgeX = sourceX + unitX * 24;
-  const sourceBadgeY = sourceY + unitY * 24;
-  const targetBadgeX = targetX - unitX * 24;
-  const targetBadgeY = targetY - unitY * 24;
   const dimmed = data?.dimmed ?? false;
   const highlighted = data?.highlighted ?? false;
-  const active = selected || highlighted;
+  const [labelHovered, setLabelHovered] = useState(false);
+  const active = selected || highlighted || labelHovered;
+  const sourceCardinality = data?.sourceCardinality ?? '1';
+  const targetCardinality = data?.targetCardinality ?? 'N';
+
+  function handleLabelEnter() {
+    setLabelHovered(true);
+    data?.onLabelHoverChange?.(id);
+  }
+
+  function handleLabelLeave() {
+    setLabelHovered(false);
+    data?.onLabelHoverChange?.(null);
+  }
+
+  function focusTable(tableId: string, event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    data?.onFocusTable?.(tableId);
+  }
 
   return (
     <>
@@ -797,28 +995,64 @@ const RelationEdge = memo(function RelationEdge({
         interactionWidth={28}
         className={`dbml-relation-edge${active ? ' is-highlighted' : ''}${dimmed ? ' is-dimmed' : ''}`}
       />
+      {active && !dimmed && (
+        <path
+          d={path}
+          className="dbml-relation-edge__flow"
+          fill="none"
+          strokeLinecap="round"
+        />
+      )}
 
       <EdgeLabelRenderer>
-        <span
-          className={`dbml-cardinality${dimmed ? ' is-dimmed' : ''}${active ? ' is-highlighted' : ''}`}
-          style={{ transform: `translate(-50%, -50%) translate(${sourceBadgeX}px, ${sourceBadgeY}px)` }}
-        >
-          {data?.sourceCardinality}
-        </span>
-        <span
-          className={`dbml-cardinality${dimmed ? ' is-dimmed' : ''}${active ? ' is-highlighted' : ''}`}
-          style={{ transform: `translate(-50%, -50%) translate(${targetBadgeX}px, ${targetBadgeY}px)` }}
-        >
-          {data?.targetCardinality}
-        </span>
+        <JunctionMarker
+          x={sourceX}
+          y={sourceY}
+          position={sourcePosition}
+          cardinality={sourceCardinality}
+          active={active}
+          dimmed={dimmed}
+        />
+        <JunctionMarker
+          x={targetX}
+          y={targetY}
+          position={targetPosition}
+          cardinality={targetCardinality}
+          active={active}
+          dimmed={dimmed}
+        />
 
-        {active && (
+        {active && data?.showEdgeInfo !== false && data && (
           <div
             className="dbml-relation-label nodrag nopan"
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            onMouseEnter={handleLabelEnter}
+            onMouseLeave={handleLabelLeave}
           >
-            <div className="dbml-relation-label__from">{data?.sourceLabel ?? data?.label}</div>
-            <div className="dbml-relation-label__to">→ {data?.targetLabel}</div>
+            <div className="dbml-relation-label__row">
+              <span className="dbml-relation-label__role">Başlangıç</span>
+              <button
+                type="button"
+                className="dbml-relation-label__table"
+                onClick={(event) => focusTable(data.sourceTable, event)}
+                title={`${data.sourceTable} tablosuna git`}
+              >
+                {data.sourceTable}
+              </button>
+              <span className="dbml-relation-label__field">.{data.sourceField}</span>
+            </div>
+            <div className="dbml-relation-label__row">
+              <span className="dbml-relation-label__role">Bitiş</span>
+              <button
+                type="button"
+                className="dbml-relation-label__table"
+                onClick={(event) => focusTable(data.targetTable, event)}
+                title={`${data.targetTable} tablosuna git`}
+              >
+                {data.targetTable}
+              </button>
+              <span className="dbml-relation-label__field">.{data.targetField}</span>
+            </div>
           </div>
         )}
       </EdgeLabelRenderer>
@@ -829,33 +1063,33 @@ const RelationEdge = memo(function RelationEdge({
 const nodeTypes = { dbmlTable: TableNode };
 const edgeTypes = { dbmlRelation: RelationEdge };
 
-function ThemeIcon({ mode }: { mode: 'light' | 'dark' }) {
-  if (mode === 'light') {
-    return (
-      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-        <circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" strokeWidth="1.8" />
-        <path
-          d="M12 2.5v2.2M12 19.3v2.2M4.5 12H2.3M21.7 12h-2.2M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-        />
-      </svg>
-    );
-  }
+type ThemeId = 'dark' | 'light' | 'night' | 'sea';
 
-  return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path
-        d="M18.5 14.2A7.2 7.2 0 0 1 9.8 5.5 7.6 7.6 0 1 0 18.5 14.2Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+const THEME_OPTIONS: Array<{
+  id: ThemeId;
+  label: string;
+  scheme: 'dark' | 'light';
+  swatchBg: string;
+  swatchAccent: string;
+  dot: string;
+}> = [
+  { id: 'dark', label: 'Koyu', scheme: 'dark', swatchBg: '#0f1419', swatchAccent: '#3d8fd1', dot: '#3a4554' },
+  { id: 'night', label: 'Gece', scheme: 'dark', swatchBg: '#0b1020', swatchAccent: '#5eead4', dot: '#3a4568' },
+  { id: 'light', label: 'Açık', scheme: 'light', swatchBg: '#fbfcfd', swatchAccent: '#315d86', dot: '#9aa8b8' },
+  { id: 'sea', label: 'Deniz', scheme: 'light', swatchBg: '#f3f8f7', swatchAccent: '#0f766e', dot: '#8fafa9' },
+];
+
+const THEME_META = Object.fromEntries(THEME_OPTIONS.map((item) => [item.id, item])) as Record<
+  ThemeId,
+  (typeof THEME_OPTIONS)[number]
+>;
+
+function isThemeId(value: string | null): value is ThemeId {
+  return value === 'dark' || value === 'light' || value === 'night' || value === 'sea';
+}
+
+function isLightScheme(theme: ThemeId): boolean {
+  return THEME_META[theme].scheme === 'light';
 }
 
 // -----------------------------------------------------------------------------
@@ -871,22 +1105,192 @@ function nodeHeight(table: DbmlTable): number {
   return HEADER_HEIGHT + table.fields.length * FIELD_HEIGHT;
 }
 
-function groupTablesBySchema(tables: DbmlTable[]): SchemaGroup[] {
+// Tablo başlığı renkleri — buradan değiştirilebilir.
+// 1) TABLE_HEADER_PALETTE: şema/grup adına göre sırayla kullanılan varsayılan renkler
+// 2) TABLE_HEADER_COLOR_BY_KEY: belirli şema veya TableGroup adına sabit renk (öncelikli)
+const TABLE_HEADER_PALETTE = [
+  '#315d86',
+  '#059669',
+  '#7c3aed',
+  '#db2777',
+  '#d97706',
+  '#0891b2',
+  '#dc2626',
+  '#4f46e5',
+  '#0d9488',
+  '#ca8a04',
+];
+
+const TABLE_HEADER_COLOR_BY_KEY: Record<string, string> = {
+  // örn: org: '#2563eb',
+  // örn: crm: '#7c3aed',
+};
+
+function colorForKey(key: string): string {
+  const override = TABLE_HEADER_COLOR_BY_KEY[key];
+  if (override) return override;
+
+  let hash = 0;
+  for (let index = 0; index < key.length; index += 1) {
+    hash = (hash * 31 + key.charCodeAt(index)) >>> 0;
+  }
+  return TABLE_HEADER_PALETTE[hash % TABLE_HEADER_PALETTE.length];
+}
+
+function headerColorForTable(table: DbmlTable, groupBy: 'schema' | 'tableGroup'): string {
+  if (groupBy === 'tableGroup') {
+    return colorForKey(table.tableGroup ?? '__ungrouped__');
+  }
+  return colorForKey(table.schema ?? '__noschema__');
+}
+
+function groupTablesBySchema(tables: DbmlTable[]): NavigatorGroup[] {
   const groups = new Map<string, DbmlTable[]>();
 
   for (const table of tables) {
-    const schema = table.schema ?? '(şemasız)';
-    const current = groups.get(schema);
+    const name = table.schema ?? '(şemasız)';
+    const current = groups.get(name);
     if (current) current.push(table);
-    else groups.set(schema, [table]);
+    else groups.set(name, [table]);
   }
 
   return [...groups.entries()]
     .sort(([left], [right]) => left.localeCompare(right, 'tr'))
-    .map(([schema, schemaTables]) => ({
-      schema,
+    .map(([name, schemaTables]) => ({
+      id: `schema:${name}`,
+      name,
+      color: colorForKey(name === '(şemasız)' ? '__noschema__' : name),
       tables: [...schemaTables].sort((left, right) => left.name.localeCompare(right.name, 'tr')),
     }));
+}
+
+function groupTablesByTableGroup(tables: DbmlTable[], tableGroups: DbmlTableGroup[]): NavigatorGroup[] {
+  const tableMap = new Map(tables.map((table) => [table.id, table]));
+  const grouped = new Set<string>();
+  const result: NavigatorGroup[] = [];
+
+  for (const group of tableGroups) {
+    const groupTables = group.members
+      .map((id) => tableMap.get(id))
+      .filter((table): table is DbmlTable => Boolean(table));
+    for (const table of groupTables) grouped.add(table.id);
+    result.push({
+      id: `group:${group.name}`,
+      name: group.name,
+      color: colorForKey(group.name),
+      tables: groupTables.sort((left, right) => left.name.localeCompare(right.name, 'tr')),
+    });
+  }
+
+  const ungrouped = tables.filter((table) => !grouped.has(table.id));
+  if (ungrouped.length > 0) {
+    result.push({
+      id: 'group:__ungrouped__',
+      name: '(grupsuz)',
+      color: colorForKey('__ungrouped__'),
+      tables: [...ungrouped].sort((left, right) => left.name.localeCompare(right.name, 'tr')),
+    });
+  }
+
+  return result;
+}
+
+function LayersIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <path
+        d="m12 3 8 4.5-8 4.5L4 7.5 12 3Zm0 9 8 4.5-8 4.5-8-4.5L12 12Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SchemaIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <circle cx="12" cy="5" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="6" cy="18" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="18" cy="18" r="2.2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M12 7.2v4.2M12 11.4 6.8 16M12 11.4l5.2 4.6" fill="none" stroke="currentColor" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function TableIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M4 9.5h16M10 9.5V19" fill="none" stroke="currentColor" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function EyeIcon({ closed = false }: { closed?: boolean }) {
+  if (closed) {
+    return (
+      <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+        <path
+          d="M3 3l18 18M10.6 10.7a2.2 2.2 0 0 0 3.1 3.1M9.4 5.4A10.8 10.8 0 0 1 12 5c5.2 0 9.2 3.4 10.5 7-.4 1.1-1.1 2.2-2 3.1M6.1 6.2C4.5 7.4 3.4 9 2.5 12c1.3 3.6 5.3 7 10.5 7 1.4 0 2.7-.2 3.9-.7"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <path
+        d="M2.5 12C3.8 8.4 7.8 5 13 5s9.2 3.4 10.5 7c-1.3 3.6-5.3 7-10.5 7S3.8 15.6 2.5 12Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+      />
+      <circle cx="13" cy="12" r="2.4" fill="none" stroke="currentColor" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M4.5 7h15M9.5 7V5.8A1.3 1.3 0 0 1 10.8 4.5h2.4a1.3 1.3 0 0 1 1.3 1.3V7M8 10v7.2M12 10v7.2M16 10v7.2M6.5 7l.7 12.1a1.5 1.5 0 0 0 1.5 1.4h6.6a1.5 1.5 0 0 0 1.5-1.4L17.5 7"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+      <path
+        d="M4.5 16.7V19.5h2.8L17.7 9.1 15 6.4 4.5 16.7Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
+      <path
+        d="m14.3 5.7 2.7 2.7 1.5-1.5a1.1 1.1 0 0 0 0-1.6l-1.1-1.1a1.1 1.1 0 0 0-1.6 0l-1.5 1.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.2"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 async function buildFlowGraph(parsed: ParseResult): Promise<{
@@ -915,8 +1319,10 @@ async function buildFlowGraph(parsed: ParseResult): Promise<{
       sourceCardinality: relation.sourceCardinality,
       targetCardinality: relation.targetCardinality,
       label: `${relation.source.table}.${relation.source.field} → ${relation.target.table}.${relation.target.field}`,
-      sourceLabel: `${relation.source.table}.${relation.source.field}`,
-      targetLabel: `${relation.target.table}.${relation.target.field}`,
+      sourceTable: relation.source.table,
+      targetTable: relation.target.table,
+      sourceField: relation.source.field,
+      targetField: relation.target.field,
       dimmed: false,
       highlighted: false,
     },
@@ -960,6 +1366,8 @@ async function buildFlowGraph(parsed: ParseResult): Promise<{
       foreignKeyFields: [...(foreignKeysByTable.get(table.id) ?? [])],
       dimmed: false,
       searchTerm: '',
+      searchScopes: ALL_SEARCH_SCOPES,
+      headerColor: headerColorForTable(table, 'schema'),
     },
   }));
 
@@ -970,29 +1378,72 @@ async function buildFlowGraph(parsed: ParseResult): Promise<{
 // Viewer
 // -----------------------------------------------------------------------------
 
-function matchesSearch(table: DbmlTable, normalizedSearch: string): boolean {
+function matchesSearch(
+  table: DbmlTable,
+  normalizedSearch: string,
+  scopes: SearchScope[],
+  groupName?: string,
+): boolean {
   if (!normalizedSearch) return true;
+  if (scopes.length === 0) return true;
 
-  const haystack = [
-    table.schema ?? '',
-    table.name,
-    table.fullName,
-    table.note ?? '',
-    ...table.fields.flatMap((field) => [field.name, field.type]),
-  ]
-    .join(' ')
-    .toLocaleLowerCase('tr-TR');
+  if (scopes.includes('schema')) {
+    const schemaText = `${table.schema ?? ''} ${groupName ?? ''}`.toLocaleLowerCase('tr-TR');
+    if (schemaText.includes(normalizedSearch)) return true;
+  }
 
-  return haystack.includes(normalizedSearch);
+  if (scopes.includes('table')) {
+    const tableText = `${table.name} ${table.fullName}`.toLocaleLowerCase('tr-TR');
+    if (tableText.includes(normalizedSearch)) return true;
+  }
+
+  if (scopes.includes('column')) {
+    const hasColumn = table.fields.some((field) =>
+      `${field.name} ${field.type}`.toLocaleLowerCase('tr-TR').includes(normalizedSearch),
+    );
+    if (hasColumn) return true;
+  }
+
+  return false;
 }
 
-function matchingColumns(table: DbmlTable, normalizedSearch: string): string[] {
-  if (!normalizedSearch) return [];
+function matchingColumns(
+  table: DbmlTable,
+  normalizedSearch: string,
+  scopes: SearchScope[],
+): string[] {
+  if (!normalizedSearch || !scopes.includes('column')) return [];
+
   return table.fields
     .filter((field) =>
       `${field.name} ${field.type}`.toLocaleLowerCase('tr-TR').includes(normalizedSearch),
     )
     .map((field) => field.name);
+}
+
+function fileNameFromUrl(url: string): string {
+  try {
+    const path = new URL(url).pathname;
+    const name = decodeURIComponent(path.split('/').filter(Boolean).pop() ?? '');
+    return name || 'kaynak.dbml';
+  } catch {
+    return 'kaynak.dbml';
+  }
+}
+
+function isAllowedDbmlUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl.trim());
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const path = parsed.pathname.toLowerCase();
+    return path.endsWith('.dbml') || path.endsWith('.txt');
+  } catch {
+    return false;
+  }
+}
+
+function sourceDisplayName(fileName: string): string {
+  return fileName.replace(/\.(dbml|txt)$/i, '');
 }
 
 function DbmlErdViewerContent({
@@ -1004,49 +1455,80 @@ function DbmlErdViewerContent({
 }: DbmlErdViewerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadedSources, setUploadedSources] = useState<DbmlSource[]>([]);
+  const [sourceOverrides, setSourceOverrides] = useState<Record<string, string>>({});
+  const [isEditingSource, setIsEditingSource] = useState(false);
+  const [draftContent, setDraftContent] = useState('');
+  const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
+
   const allSources = useMemo(() => {
     const merged = [...sources];
     for (const uploaded of uploadedSources) {
       if (!merged.some((item) => item.id === uploaded.id)) merged.push(uploaded);
     }
-    return merged;
-  }, [sources, uploadedSources]);
+    return merged.map((source) => ({
+      ...source,
+      content: sourceOverrides[source.id] ?? source.content,
+    }));
+  }, [sources, uploadedSources, sourceOverrides]);
 
   const [activeSourceId, setActiveSourceId] = useState(
     () => initialSourceId ?? sources[0]?.id ?? uploadedSources[0]?.id ?? '',
   );
   const activeSource = allSources.find((item) => item.id === activeSourceId) ?? allSources[0];
   const dbml = activeSource?.content ?? '';
+  const editingSource =
+    allSources.find((item) => item.id === editingSourceId) ?? activeSource ?? null;
 
   const [nodes, setNodes, onNodesChange] = useNodesState<TableFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<RelationFlowEdge>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [enumCount, setEnumCount] = useState(0);
+  const [tableGroups, setTableGroups] = useState<DbmlTableGroup[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [searchScopeFilter, setSearchScopeFilter] = useState<SearchScopeFilter>('all');
+  const searchScopes = useMemo(() => scopesFromFilter(searchScopeFilter), [searchScopeFilter]);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [hoveredTableId, setHoveredTableId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  const [collapsedSchemas, setCollapsedSchemas] = useState<Set<string>>(new Set());
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [hiddenTableIds, setHiddenTableIds] = useState<Set<string>>(new Set());
+  const [groupBy, setGroupBy] = useState<'schema' | 'tableGroup'>('schema');
+  const [groupByOpen, setGroupByOpen] = useState(false);
+  const [showEdgeInfo, setShowEdgeInfo] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('dbml-erd-edge-info') !== '0';
+  });
+  const [dataModalTableId, setDataModalTableId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<ThemeId>(() => {
     if (typeof window === 'undefined') return 'light';
     const saved = window.localStorage.getItem('dbml-erd-theme');
-    if (saved === 'dark' || saved === 'light') return saved;
+    if (isThemeId(saved)) return saved;
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
   });
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  const [viewLocked, setViewLocked] = useState(false);
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkError, setLinkError] = useState<string | null>(null);
+  const [linkLoading, setLinkLoading] = useState(false);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
+  const edgeLeaveTimerRef = useRef<number | null>(null);
   const { fitView, fitBounds, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
 
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-theme', theme);
     document.documentElement.dataset.theme = theme;
-    document.body.style.background = theme === 'light' ? '#f4f5f7' : '#0f1419';
+    document.documentElement.dataset.scheme = THEME_META[theme].scheme;
+    document.body.style.background = THEME_META[theme].swatchBg;
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem('dbml-erd-edge-info', showEdgeInfo ? '1' : '0');
+  }, [showEdgeInfo]);
 
   useEffect(() => {
     function onPointerMove(event: PointerEvent) {
@@ -1115,13 +1597,18 @@ function DbmlErdViewerContent({
 
         setWarnings(parsed.warnings);
         setEnumCount(parsed.enums.length);
+        setTableGroups(parsed.tableGroups);
         setNodes(graph.nodes);
         setEdges(graph.edges);
         setSelectedTable(null);
         setHoveredTableId(null);
         setHoveredEdgeId(null);
         setSearchTerm('');
-        setCollapsedSchemas(new Set());
+        setSearchScopeFilter('all');
+        setCollapsedGroups(new Set());
+        setHiddenTableIds(new Set());
+        setGroupByOpen(false);
+        setDataModalTableId(null);
 
         window.requestAnimationFrame(() => {
           fitView({ padding: 0.12, duration: 500, maxZoom: 1 });
@@ -1130,6 +1617,7 @@ function DbmlErdViewerContent({
         if (cancelled) return;
         setError(caughtError instanceof Error ? caughtError.message : 'DBML render edilirken hata oluştu.');
         setEnumCount(0);
+        setTableGroups([]);
         setNodes([]);
         setEdges([]);
       }
@@ -1141,28 +1629,46 @@ function DbmlErdViewerContent({
     };
   }, [dbml, fitView, layoutVersion, setEdges, setNodes]);
 
-  const schemaGroups = useMemo(
-    () => groupTablesBySchema(nodes.map((node) => node.data.table)),
-    [nodes],
-  );
-
   const normalizedSearch = searchTerm.trim().toLocaleLowerCase('tr-TR');
 
-  const filteredSchemaGroups = useMemo(() => {
-    if (!normalizedSearch) return schemaGroups;
+  const navigatorGroups = useMemo(() => {
+    const tables = nodes.map((node) => node.data.table);
+    return groupBy === 'tableGroup'
+      ? groupTablesByTableGroup(tables, tableGroups)
+      : groupTablesBySchema(tables);
+  }, [groupBy, nodes, tableGroups]);
 
-    return schemaGroups
+  const filteredNavigatorGroups = useMemo(() => {
+    if (!normalizedSearch) return navigatorGroups;
+
+    return navigatorGroups
       .map((group) => {
-        const schemaMatch = group.schema.toLocaleLowerCase('tr-TR').includes(normalizedSearch);
+        const groupMatch =
+          searchScopes.includes('schema') &&
+          group.name.toLocaleLowerCase('tr-TR').includes(normalizedSearch);
         return {
           ...group,
-          tables: schemaMatch
+          tables: groupMatch
             ? group.tables
-            : group.tables.filter((table) => matchesSearch(table, normalizedSearch)),
+            : group.tables.filter((table) =>
+                matchesSearch(table, normalizedSearch, searchScopes, group.name),
+              ),
         };
       })
       .filter((group) => group.tables.length > 0);
-  }, [normalizedSearch, schemaGroups]);
+  }, [navigatorGroups, normalizedSearch, searchScopes]);
+
+  const tableGroupNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of navigatorGroups) {
+      for (const table of group.tables) {
+        map.set(table.id, group.name);
+      }
+    }
+    return map;
+  }, [navigatorGroups]);
+
+  const visibleTableCount = nodes.length - hiddenTableIds.size;
 
   const connectedTableIds = useMemo(() => {
     if (!selectedTable) return new Set<string>();
@@ -1189,32 +1695,120 @@ function DbmlErdViewerContent({
     return ids;
   }, [edges, hoveredEdgeId, hoveredTableId]);
 
+  const openTableData = useCallback((tableId: string) => {
+    setDataModalTableId(tableId);
+  }, []);
+
+  const dataModalTable = useMemo(() => {
+    if (!dataModalTableId) return null;
+    return nodes.find((node) => node.id === dataModalTableId)?.data ?? null;
+  }, [dataModalTableId, nodes]);
+
+  const dataModalRows = useMemo(() => {
+    if (!dataModalTable) return [];
+    return buildSampleRows(dataModalTable.table);
+  }, [dataModalTable]);
+
   const visibleNodes = useMemo(() => {
     return nodes.map((node) => {
-      const searchMismatch = normalizedSearch.length > 0 && !matchesSearch(node.data.table, normalizedSearch);
+      const searchMismatch =
+        normalizedSearch.length > 0 &&
+        !matchesSearch(
+          node.data.table,
+          normalizedSearch,
+          searchScopes,
+          tableGroupNameById.get(node.id),
+        );
       const relationMismatch = selectedTable !== null && !connectedTableIds.has(node.id);
       const hoverActive = hoveredTableId !== null || hoveredEdgeId !== null;
       const hoverDim = hoverActive && !selectedTable && !hoverConnectedIds.has(node.id);
+      const isHidden = hiddenTableIds.has(node.id);
 
       return {
         ...node,
+        hidden: isHidden,
         data: {
           ...node.data,
           dimmed: searchMismatch || relationMismatch || hoverDim,
           searchTerm,
+          searchScopes,
+          headerColor: headerColorForTable(node.data.table, groupBy),
+          onOpenTableData: openTableData,
         },
       };
     });
   }, [
     connectedTableIds,
+    groupBy,
+    hiddenTableIds,
     hoverConnectedIds,
     hoveredEdgeId,
     hoveredTableId,
     nodes,
     normalizedSearch,
+    openTableData,
+    searchScopes,
     searchTerm,
     selectedTable,
+    tableGroupNameById,
   ]);
+
+  function downloadSampleCsv() {
+    if (!dataModalTable) return;
+    const fields = dataModalTable.table.fields.map((field) => field.name);
+    const lines = [
+      fields.join(','),
+      ...dataModalRows.map((row) =>
+        fields
+          .map((field) => {
+            const value = row[field] ?? '';
+            if (value.includes(',') || value.includes('"')) return `"${value.replaceAll('"', '""')}"`;
+            return value;
+          })
+          .join(','),
+      ),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${dataModalTable.table.fullName.replaceAll('.', '_')}_ornek.csv`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  const focusTables = useCallback(
+    (tableIds: string[]) => {
+      const matchingNodes = visibleNodes.filter((node) => tableIds.includes(node.id));
+      if (matchingNodes.length > 0) {
+        fitView({ nodes: matchingNodes, padding: 0.35, duration: 450, maxZoom: 1.25 });
+      }
+    },
+    [fitView, visibleNodes],
+  );
+
+  const selectAndFocusTable = useCallback(
+    (tableId: string) => {
+      setSelectedTable(tableId);
+      setHoveredEdgeId(null);
+      focusTables([tableId]);
+    },
+    [focusTables],
+  );
+
+  const handleEdgeLabelHoverChange = useCallback((edgeId: string | null) => {
+    if (edgeLeaveTimerRef.current !== null) {
+      window.clearTimeout(edgeLeaveTimerRef.current);
+      edgeLeaveTimerRef.current = null;
+    }
+    if (edgeId) setHoveredEdgeId(edgeId);
+    else {
+      edgeLeaveTimerRef.current = window.setTimeout(() => {
+        setHoveredEdgeId(null);
+        edgeLeaveTimerRef.current = null;
+      }, 120);
+    }
+  }, []);
 
   const visibleEdges = useMemo(() => {
     return edges.map((edge) => {
@@ -1237,20 +1831,22 @@ function DbmlErdViewerContent({
           ...edge.data!,
           dimmed: relationMismatch || (searchDimmed && !highlighted),
           highlighted,
+          showEdgeInfo,
+          onFocusTable: selectAndFocusTable,
+          onLabelHoverChange: handleEdgeLabelHoverChange,
         },
       };
     });
-  }, [edges, hoveredEdgeId, hoveredTableId, selectedTable, visibleNodes]);
-
-  const focusTables = useCallback(
-    (tableIds: string[]) => {
-      const matchingNodes = visibleNodes.filter((node) => tableIds.includes(node.id));
-      if (matchingNodes.length > 0) {
-        fitView({ nodes: matchingNodes, padding: 0.35, duration: 450, maxZoom: 1.25 });
-      }
-    },
-    [fitView, visibleNodes],
-  );
+  }, [
+    edges,
+    handleEdgeLabelHoverChange,
+    hoveredEdgeId,
+    hoveredTableId,
+    selectAndFocusTable,
+    selectedTable,
+    showEdgeInfo,
+    visibleNodes,
+  ]);
 
   function focusSearchResult() {
     const matchingNodes = visibleNodes.filter((node) => !node.data.dimmed);
@@ -1259,23 +1855,53 @@ function DbmlErdViewerContent({
     }
   }
 
-  function selectAndFocusTable(tableId: string) {
-    setSelectedTable(tableId);
-    focusTables([tableId]);
+  function toggleGroup(groupId: string) {
+    setCollapsedGroups((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
   }
 
-  function toggleSchema(schema: string) {
-    setCollapsedSchemas((current) => {
+  function toggleTableVisibility(tableId: string) {
+    setHiddenTableIds((current) => {
       const next = new Set(current);
-      if (next.has(schema)) next.delete(schema);
-      else next.add(schema);
+      if (next.has(tableId)) next.delete(tableId);
+      else next.add(tableId);
       return next;
+    });
+  }
+
+  function toggleGroupVisibility(group: NavigatorGroup) {
+    setHiddenTableIds((current) => {
+      const next = new Set(current);
+      const allHidden = group.tables.every((table) => next.has(table.id));
+      for (const table of group.tables) {
+        if (allHidden) next.delete(table.id);
+        else next.add(table.id);
+      }
+      return next;
+    });
+  }
+
+  function toggleAllVisibility() {
+    setHiddenTableIds((current) => {
+      if (current.size === 0) return new Set(nodes.map((node) => node.id));
+      return new Set();
     });
   }
 
   function handleUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith('.dbml') && !lowerName.endsWith('.txt')) {
+      setLinkError('Yalnızca .dbml veya .txt dosyaları yüklenebilir.');
+      event.target.value = '';
+      return;
+    }
 
     const reader = new FileReader();
     reader.onload = () => {
@@ -1284,9 +1910,11 @@ function DbmlErdViewerContent({
       const source: DbmlSource = {
         id,
         name: file.name,
-        label: file.name.replace(/\.dbml$/i, ''),
+        label: sourceDisplayName(file.name),
         content,
+        kind: 'upload',
       };
+      setLinkError(null);
       setUploadedSources((current) => [source, ...current]);
       setActiveSourceId(id);
     };
@@ -1294,74 +1922,353 @@ function DbmlErdViewerContent({
     event.target.value = '';
   }
 
+  function handleExport() {
+    if (!activeSource?.content.trim()) {
+      setLinkError('Dışa aktarılacak bir kaynak yok.');
+      return;
+    }
+
+    const rawName = activeSource.name || 'export.dbml';
+    const fileName = /\.(dbml|txt)$/i.test(rawName) ? rawName : `${rawName}.dbml`;
+    const blob = new Blob([activeSource.content], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setLinkError(null);
+  }
+
+  function handleRemoveSource(sourceId: string) {
+    const removable = uploadedSources.find((item) => item.id === sourceId);
+    if (!removable) return;
+
+    const remainingUploads = uploadedSources.filter((item) => item.id !== sourceId);
+    setUploadedSources(remainingUploads);
+    setSourceOverrides((current) => {
+      if (!(sourceId in current)) return current;
+      const next = { ...current };
+      delete next[sourceId];
+      return next;
+    });
+    setLinkError(null);
+
+    if (editingSourceId === sourceId) {
+      setIsEditingSource(false);
+      setEditingSourceId(null);
+      setDraftContent('');
+    }
+
+    if (activeSourceId !== sourceId) return;
+
+    const nextSource =
+      sources.find((item) => item.id !== sourceId) ??
+      remainingUploads[0] ??
+      null;
+    setActiveSourceId(nextSource?.id ?? '');
+  }
+
+  function openSourceEditor(sourceId: string) {
+    const source = allSources.find((item) => item.id === sourceId);
+    if (!source) return;
+    setActiveSourceId(sourceId);
+    setEditingSourceId(sourceId);
+    setDraftContent(source.content);
+    setIsEditingSource(true);
+    setLeftOpen(true);
+    setLinkError(null);
+  }
+
+  function cancelSourceEditor() {
+    setIsEditingSource(false);
+    setEditingSourceId(null);
+    setDraftContent('');
+  }
+
+  function applySourceEditor() {
+    if (!editingSourceId) return;
+
+    const uploaded = uploadedSources.some((item) => item.id === editingSourceId);
+    if (uploaded) {
+      setUploadedSources((current) =>
+        current.map((item) =>
+          item.id === editingSourceId ? { ...item, content: draftContent } : item,
+        ),
+      );
+      setSourceOverrides((current) => {
+        if (!(editingSourceId in current)) return current;
+        const next = { ...current };
+        delete next[editingSourceId];
+        return next;
+      });
+    } else {
+      setSourceOverrides((current) => ({
+        ...current,
+        [editingSourceId]: draftContent,
+      }));
+    }
+
+    setActiveSourceId(editingSourceId);
+    setIsEditingSource(false);
+    setEditingSourceId(null);
+    setLinkError(null);
+  }
+
+  async function handleAddLink() {
+    const trimmed = linkUrl.trim();
+    if (!trimmed) {
+      setLinkError('Bir bağlantı yapıştırın.');
+      return;
+    }
+    if (!isAllowedDbmlUrl(trimmed)) {
+      setLinkError('Bağlantı http(s) olmalı ve .dbml veya .txt ile bitmeli.');
+      return;
+    }
+
+    setLinkLoading(true);
+    setLinkError(null);
+
+    try {
+      const response = await fetch(trimmed);
+      if (!response.ok) {
+        throw new Error(`Dosya alınamadı (${response.status}).`);
+      }
+
+      const content = await response.text();
+      if (!content.trim()) {
+        throw new Error('Bağlantıdaki dosya boş.');
+      }
+
+      const fileName = fileNameFromUrl(trimmed);
+      const id = `link:${trimmed}`;
+      const source: DbmlSource = {
+        id,
+        name: fileName,
+        label: trimmed,
+        content,
+        kind: 'link',
+        url: trimmed,
+      };
+
+      setUploadedSources((current) => [source, ...current.filter((item) => item.id !== id)]);
+      setActiveSourceId(id);
+      setLinkUrl('');
+    } catch (caughtError) {
+      const message =
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'Bağlantı yüklenemedi. CORS engeli olabilir.';
+      setLinkError(
+        message.includes('Failed to fetch')
+          ? 'Bağlantı yüklenemedi. Kaynak CORS’a izin vermiyor olabilir.'
+          : message,
+      );
+    } finally {
+      setLinkLoading(false);
+    }
+  }
+
   return (
     <section
-      className={`dbml-erd-viewer ${leftOpen ? 'is-left-open' : ''} ${rightOpen ? 'is-right-open' : ''} ${className}`.trim()}
+      className={`dbml-erd-viewer ${leftOpen ? 'is-left-open' : ''} ${rightOpen ? 'is-right-open' : ''}${isEditingSource ? ' is-editing-source' : ''} ${className}`.trim()}
       data-theme={theme}
+      data-scheme={THEME_META[theme].scheme}
       style={{ height }}
       aria-label={title}
     >
       <aside className={`dbml-side dbml-side--left${leftOpen ? ' is-open' : ''}`}>
         <div className="dbml-side__header">
           <div>
-            <div className="dbml-side__eyebrow">Kaynak</div>
-            <h2>.dbml dosyaları</h2>
+            <div className="dbml-side__eyebrow">{isEditingSource ? 'Düzenle' : 'Kaynak'}</div>
+            <h2>
+              {isEditingSource
+                ? editingSource?.name ?? 'DBML'
+                : '.dbml dosyaları'}
+            </h2>
           </div>
-          <button type="button" className="dbml-icon-button" onClick={() => setLeftOpen(false)} aria-label="Sol menüyü kapat">
-            ←
-          </button>
+          {isEditingSource ? (
+            <div className="dbml-side__header-actions">
+              <button type="button" className="dbml-icon-button" onClick={cancelSourceEditor} aria-label="Düzenlemeyi iptal et" title="İptal">
+                ×
+              </button>
+            </div>
+          ) : (
+            <button type="button" className="dbml-icon-button" onClick={() => setLeftOpen(false)} aria-label="Sol menüyü kapat">
+              ←
+            </button>
+          )}
         </div>
 
-        <div className="dbml-side__body">
-          <div className="dbml-theme-toggle" role="group" aria-label="Tema">
-            <button
-              type="button"
-              className={`dbml-theme-toggle__button${theme === 'light' ? ' is-active' : ''}`}
-              onClick={() => setTheme('light')}
-              aria-label="Açık tema"
-              title="Açık tema"
-            >
-              <ThemeIcon mode="light" />
-            </button>
-            <button
-              type="button"
-              className={`dbml-theme-toggle__button${theme === 'dark' ? ' is-active' : ''}`}
-              onClick={() => setTheme('dark')}
-              aria-label="Koyu tema"
-              title="Koyu tema"
-            >
-              <ThemeIcon mode="dark" />
-            </button>
+        <div className={`dbml-side__body${isEditingSource ? ' is-editor' : ''}`}>
+          {isEditingSource ? (
+            <>
+              <div className="dbml-source-editor__toolbar">
+                <span className="dbml-source-editor__hint">DBML metnini düzenleyin</span>
+                <div className="dbml-source-editor__actions">
+                  <button type="button" className="dbml-source-editor__button" onClick={cancelSourceEditor}>
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    className="dbml-source-editor__button dbml-source-editor__button--primary"
+                    onClick={applySourceEditor}
+                  >
+                    Uygula
+                  </button>
+                </div>
+              </div>
+              <textarea
+                className="dbml-source-editor__textarea"
+                value={draftContent}
+                onChange={(event) => setDraftContent(event.target.value)}
+                spellCheck={false}
+                aria-label="DBML metin editörü"
+              />
+            </>
+          ) : (
+            <>
+          <label className="dbml-theme-select">
+            <span className="dbml-theme-select__label">Tema</span>
+            <span className="dbml-theme-select__control">
+              <span
+                className="dbml-theme-select__swatch"
+                style={
+                  {
+                    ['--swatch-bg' as string]: THEME_META[theme].swatchBg,
+                    ['--swatch-accent' as string]: THEME_META[theme].swatchAccent,
+                  }
+                }
+                aria-hidden="true"
+              />
+              <select
+                value={theme}
+                onChange={(event) => setTheme(event.target.value as ThemeId)}
+                aria-label="Tema"
+              >
+                {THEME_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </span>
+          </label>
+
+          <div className="dbml-source-actions">
+            <div className="dbml-source-actions__row">
+              <button type="button" className="dbml-side__upload" onClick={() => fileInputRef.current?.click()}>
+                Dosya yükle
+              </button>
+              <button
+                type="button"
+                className="dbml-side__export"
+                onClick={handleExport}
+                disabled={!activeSource?.content.trim()}
+                title="Aktif kaynağı .dbml olarak indir"
+              >
+                Export
+              </button>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".dbml,.txt,text/plain"
+              hidden
+              onChange={handleUpload}
+            />
+
+            <div className="dbml-link-form">
+              <input
+                value={linkUrl}
+                onChange={(event) => {
+                  setLinkUrl(event.target.value);
+                  if (linkError) setLinkError(null);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    void handleAddLink();
+                  }
+                }}
+                placeholder="https://.../dosya.dbml"
+                aria-label="DBML veya TXT bağlantısı"
+              />
+              <button type="button" onClick={() => void handleAddLink()} disabled={linkLoading}>
+                {linkLoading ? '...' : 'Ekle'}
+              </button>
+            </div>
+            {linkError && <div className="dbml-link-form__error">{linkError}</div>}
           </div>
 
-          <button type="button" className="dbml-side__upload" onClick={() => fileInputRef.current?.click()}>
-            Dosya yükle
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".dbml,text/plain"
-            hidden
-            onChange={handleUpload}
-          />
-
           <ul className="dbml-file-list">
-            {allSources.map((source) => (
-              <li key={source.id}>
-                <button
-                  type="button"
-                  className={`dbml-file-list__item${source.id === activeSource?.id ? ' is-active' : ''}`}
-                  onClick={() => setActiveSourceId(source.id)}
-                >
-                  <span className="dbml-file-list__name">{source.name}</span>
-                  <span className="dbml-file-list__meta">{source.label}</span>
-                </button>
-              </li>
-            ))}
+            {allSources.map((source) => {
+              const canRemove = source.kind === 'upload' || source.kind === 'link';
+              return (
+                <li key={source.id} className="dbml-file-list__row">
+                  <button
+                    type="button"
+                    className={`dbml-file-list__item${source.id === activeSource?.id ? ' is-active' : ''}`}
+                    onClick={() => setActiveSourceId(source.id)}
+                    title={source.url ?? source.name}
+                  >
+                    <span className="dbml-file-list__name">{source.name}</span>
+                    <span className="dbml-file-list__meta">
+                      {source.kind === 'link' ? 'Bağlantı' : source.kind === 'upload' ? 'Yüklenen' : source.label}
+                      {sourceOverrides[source.id] ? ' · düzenlendi' : ''}
+                    </span>
+                  </button>
+                  <div className="dbml-file-list__actions">
+                    <button
+                      type="button"
+                      className="dbml-file-list__edit"
+                      onClick={() => openSourceEditor(source.id)}
+                      title="Metni düzenle"
+                      aria-label={`${source.name} metnini düzenle`}
+                    >
+                      <EditIcon />
+                    </button>
+                    {canRemove && (
+                      <button
+                        type="button"
+                        className="dbml-file-list__delete"
+                        onClick={() => handleRemoveSource(source.id)}
+                        title="Kaynağı sil"
+                        aria-label={`${source.name} kaynağını sil`}
+                      >
+                        <TrashIcon />
+                      </button>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
             {allSources.length === 0 && (
-              <li className="dbml-side__empty">Henüz .dbml yok. Dosya yükleyin.</li>
+              <li className="dbml-side__empty">Henüz kaynak yok. Dosya yükleyin veya bağlantı ekleyin.</li>
             )}
           </ul>
+
+          <div className="dbml-side__footer">
+            <button
+              type="button"
+              className={`dbml-edge-info-toggle${showEdgeInfo ? ' is-on' : ''}`}
+              role="switch"
+              aria-checked={showEdgeInfo}
+              onClick={() => setShowEdgeInfo((current) => !current)}
+            >
+              <span className="dbml-edge-info-toggle__text">
+                <span className="dbml-edge-info-toggle__title">Çizgi bilgisi</span>
+                <span className="dbml-edge-info-toggle__hint">
+                  {showEdgeInfo ? 'Üzerine gelince info açık' : 'Üzerine gelince info kapalı'}
+                </span>
+              </span>
+              <span className="dbml-edge-info-toggle__switch" aria-hidden="true">
+                <span className="dbml-edge-info-toggle__knob" />
+              </span>
+            </button>
+          </div>
+            </>
+          )}
         </div>
       </aside>
 
@@ -1398,13 +2305,25 @@ function DbmlErdViewerContent({
           onNodeClick={(_, node) => setSelectedTable((current) => (current === node.id ? null : node.id))}
           onNodeMouseEnter={(_, node) => setHoveredTableId(node.id)}
           onNodeMouseLeave={() => setHoveredTableId(null)}
-          onEdgeMouseEnter={(_, edge) => setHoveredEdgeId(edge.id)}
-          onEdgeMouseLeave={() => setHoveredEdgeId(null)}
+          onEdgeMouseEnter={(_, edge) => {
+            if (edgeLeaveTimerRef.current !== null) {
+              window.clearTimeout(edgeLeaveTimerRef.current);
+              edgeLeaveTimerRef.current = null;
+            }
+            setHoveredEdgeId(edge.id);
+          }}
+          onEdgeMouseLeave={() => {
+            edgeLeaveTimerRef.current = window.setTimeout(() => {
+              setHoveredEdgeId(null);
+              edgeLeaveTimerRef.current = null;
+            }, 160);
+          }}
           onPaneClick={() => {
             setSelectedTable(null);
             setHoveredEdgeId(null);
           }}
           onMouseDown={(event) => {
+            if (viewLocked) return;
             const target = event.target as HTMLElement;
             if (event.button !== 0) return;
             if (!target.classList.contains('react-flow__pane')) return;
@@ -1420,20 +2339,78 @@ function DbmlErdViewerContent({
           minZoom={0.05}
           maxZoom={3}
           panOnScroll
-          panOnDrag={[1, 2]}
+          panOnDrag={viewLocked ? true : [1, 2]}
           selectionOnDrag={false}
           onlyRenderVisibleElements
-          fitView
-          className="is-marquee-mode"
+          className={viewLocked ? 'is-pan-mode' : 'is-marquee-mode'}
         >
           <Background
             variant={BackgroundVariant.Dots}
-            gap={22}
-            size={1}
-            color={theme === 'light' ? '#c8cdd3' : '#3a4554'}
+            gap={isLightScheme(theme) ? 16 : 22}
+            size={isLightScheme(theme) ? 2 : 1}
+            color={THEME_META[theme].dot}
           />
           <MiniMap pannable zoomable position="bottom-right" nodeStrokeWidth={2} />
-          <Controls position="bottom-left" showInteractive={false} />
+          <Controls position="bottom-left" showInteractive={false}>
+            <ControlButton
+              className={`dbml-lock-button${viewLocked ? ' is-locked' : ''}`}
+              onClick={() => {
+                setViewLocked((current) => {
+                  const next = !current;
+                  if (next) {
+                    marqueeActiveRef.current = false;
+                    marqueeStartRef.current = null;
+                    setMarquee(null);
+                  }
+                  return next;
+                });
+              }}
+              title={viewLocked ? 'Kilidi aç — alan zoom' : 'Kilitle — sürükleyerek kaydır'}
+              aria-label={viewLocked ? 'Görünüm kilidini aç' : 'Görünümü kilitle'}
+            >
+              {viewLocked ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M7 11V8a5 5 0 0 1 9.9-1"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                  <rect
+                    x="5"
+                    y="11"
+                    width="14"
+                    height="10"
+                    rx="2"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                  />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M8 11V8a4 4 0 0 1 8 0v3"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  />
+                  <rect
+                    x="5"
+                    y="11"
+                    width="14"
+                    height="10"
+                    rx="2"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                  />
+                </svg>
+              )}
+            </ControlButton>
+          </Controls>
 
           <Panel position="top-center" className="dbml-toolbar nodrag nopan">
             <div className="dbml-toolbar__title">
@@ -1466,9 +2443,12 @@ function DbmlErdViewerContent({
           <Panel position="bottom-left" className="dbml-legend nodrag nopan">
             <span><b className="dbml-legend__dot dbml-legend__dot--pk" />PK</span>
             <span><b className="dbml-legend__dot dbml-legend__dot--fk" />FK</span>
+            <span><b className="dbml-legend__dot dbml-legend__dot--ai" />AI Auto Increment</span>
             <span><b>1</b> Tek</span>
             <span><b>N</b> Çok</span>
-            <span className="dbml-legend__hint">Boş alanda sürükle: zoom · Scroll: kaydır</span>
+            <span className="dbml-legend__hint">
+              {viewLocked ? 'Kilitli: sürükleyerek kaydır' : 'Açık: sürükleyerek alan zoom'}
+            </span>
           </Panel>
 
           {error && <Panel position="top-center" className="dbml-error nodrag nopan">{error}</Panel>}
@@ -1499,6 +2479,21 @@ function DbmlErdViewerContent({
         </div>
 
         <div className="dbml-side__body">
+          <label className="dbml-search-select">
+            <span className="dbml-search-select__label">Filtre</span>
+            <select
+              value={searchScopeFilter}
+              onChange={(event) => setSearchScopeFilter(event.target.value as SearchScopeFilter)}
+              aria-label="Arama filtresi"
+            >
+              {SEARCH_SCOPE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label className="dbml-search">
             <span className="dbml-search__icon" aria-hidden="true">⌕</span>
             <input
@@ -1516,23 +2511,26 @@ function DbmlErdViewerContent({
             )}
           </label>
 
-          <div className="dbml-side__stats">
-            <div>
-              <strong>{schemaGroups.length}</strong>
-              <span>şema</span>
-            </div>
-            <div>
-              <strong>{nodes.length}</strong>
-              <span>tablo</span>
-            </div>
-            <div>
+          <div className="dbml-side__stats" aria-label="Özet">
+            <span>
+              <strong>{groupBy === 'schema' ? navigatorGroups.length : tableGroups.length}</strong>
+              {groupBy === 'schema' ? 'şema' : 'grup'}
+            </span>
+            <span className="dbml-side__stats-sep" aria-hidden="true">·</span>
+            <span>
+              <strong>{visibleTableCount}/{nodes.length}</strong>
+              tablo
+            </span>
+            <span className="dbml-side__stats-sep" aria-hidden="true">·</span>
+            <span>
               <strong>{edges.length}</strong>
-              <span>ilişki</span>
-            </div>
-            <div>
+              ilişki
+            </span>
+            <span className="dbml-side__stats-sep" aria-hidden="true">·</span>
+            <span>
               <strong>{enumCount}</strong>
-              <span>enum</span>
-            </div>
+              enum
+            </span>
           </div>
 
           {warnings.length > 0 && (
@@ -1541,38 +2539,120 @@ function DbmlErdViewerContent({
             </div>
           )}
 
+          <div className="dbml-groupby">
+            <div className="dbml-groupby__row">
+              <button
+                type="button"
+                className="dbml-groupby__trigger"
+                onClick={() => setGroupByOpen((open) => !open)}
+                aria-expanded={groupByOpen}
+              >
+                <LayersIcon />
+                <span>Gruplandır: {groupBy === 'schema' ? 'Şema' : 'Tablo Grubu'}</span>
+                <span className="dbml-groupby__chevron">{groupByOpen ? '▴' : '▾'}</span>
+              </button>
+              <button
+                type="button"
+                className="dbml-visibility-button"
+                onClick={toggleAllVisibility}
+                title={hiddenTableIds.size === 0 ? 'Tümünü gizle' : 'Tümünü göster'}
+                aria-label={hiddenTableIds.size === 0 ? 'Tümünü gizle' : 'Tümünü göster'}
+              >
+                <EyeIcon closed={hiddenTableIds.size > 0 && hiddenTableIds.size === nodes.length} />
+              </button>
+            </div>
+
+            {groupByOpen && (
+              <div className="dbml-groupby__menu" role="listbox">
+                <button
+                  type="button"
+                  className={`dbml-groupby__option${groupBy === 'schema' ? ' is-active' : ''}`}
+                  onClick={() => {
+                    setGroupBy('schema');
+                    setGroupByOpen(false);
+                  }}
+                >
+                  <span>Şema</span>
+                  {groupBy === 'schema' && <span className="dbml-groupby__check">✓</span>}
+                </button>
+                <button
+                  type="button"
+                  className={`dbml-groupby__option${groupBy === 'tableGroup' ? ' is-active' : ''}`}
+                  onClick={() => {
+                    setGroupBy('tableGroup');
+                    setGroupByOpen(false);
+                  }}
+                >
+                  <span>Tablo Grubu</span>
+                  {groupBy === 'tableGroup' && <span className="dbml-groupby__check">✓</span>}
+                </button>
+              </div>
+            )}
+          </div>
+
           <div className="dbml-schema-tree">
-            {filteredSchemaGroups.map((group) => {
-              const collapsed = collapsedSchemas.has(group.schema) && !normalizedSearch;
-              const originalCount =
-                schemaGroups.find((item) => item.schema === group.schema)?.tables.length ?? group.tables.length;
+            {filteredNavigatorGroups.map((group) => {
+              const collapsed = collapsedGroups.has(group.id) && !normalizedSearch;
+              const visibleInGroup = group.tables.filter((table) => !hiddenTableIds.has(table.id)).length;
+              const groupHidden = group.tables.length > 0 && visibleInGroup === 0;
 
               return (
-                <section className="dbml-schema-group" key={group.schema}>
-                  <button
-                    type="button"
-                    className="dbml-schema-group__header"
-                    onClick={() => toggleSchema(group.schema)}
-                  >
-                    <span className="dbml-schema-group__chevron">{collapsed ? '▸' : '▾'}</span>
-                    <span className="dbml-schema-group__name">{group.schema}</span>
-                    <span className="dbml-schema-group__count">{originalCount}</span>
-                  </button>
+                <section className="dbml-schema-group" key={group.id}>
+                  <div className="dbml-schema-group__header-row">
+                    <button
+                      type="button"
+                      className="dbml-schema-group__header"
+                      onClick={() => toggleGroup(group.id)}
+                    >
+                      <span className="dbml-schema-group__chevron">{collapsed ? '▸' : '▾'}</span>
+                      <span className="dbml-schema-group__icon" style={{ color: group.color }}>
+                        <SchemaIcon />
+                      </span>
+                      <span className="dbml-schema-group__swatch" style={{ background: group.color }} />
+                      <span className="dbml-schema-group__name">{group.name}</span>
+                      <span className="dbml-schema-group__count">
+                        {visibleInGroup}/{group.tables.length}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="dbml-visibility-button"
+                      onClick={() => toggleGroupVisibility(group)}
+                      title={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
+                      aria-label={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
+                    >
+                      <EyeIcon closed={groupHidden} />
+                    </button>
+                  </div>
 
                   {!collapsed && (
                     <ul className="dbml-schema-group__tables">
                       {group.tables.map((table) => {
-                        const columns = matchingColumns(table, normalizedSearch);
+                        const columns = matchingColumns(table, normalizedSearch, searchScopes);
+                        const isHidden = hiddenTableIds.has(table.id);
                         return (
                           <li key={table.id}>
-                            <button
-                              type="button"
-                              className={`dbml-schema-group__table${selectedTable === table.id ? ' is-active' : ''}`}
-                              onClick={() => selectAndFocusTable(table.id)}
-                            >
-                              <span>{table.name}</span>
-                              <span>{table.fields.length}</span>
-                            </button>
+                            <div className="dbml-schema-group__table-row">
+                              <button
+                                type="button"
+                                className={`dbml-schema-group__table${selectedTable === table.id ? ' is-active' : ''}${isHidden ? ' is-hidden' : ''}`}
+                                onClick={() => selectAndFocusTable(table.id)}
+                              >
+                                <span className="dbml-schema-group__table-icon">
+                                  <TableIcon />
+                                </span>
+                                <span className="dbml-schema-group__table-name">{table.name}</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="dbml-visibility-button"
+                                onClick={() => toggleTableVisibility(table.id)}
+                                title={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
+                                aria-label={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
+                              >
+                                <EyeIcon closed={isHidden} />
+                              </button>
+                            </div>
                             {columns.length > 0 && (
                               <ul className="dbml-schema-group__columns">
                                 {columns.map((column) => (
@@ -1589,12 +2669,102 @@ function DbmlErdViewerContent({
               );
             })}
 
-            {filteredSchemaGroups.length === 0 && (
-              <div className="dbml-side__empty">Eşleşen şema/tablo yok.</div>
+            {filteredNavigatorGroups.length === 0 && (
+              <div className="dbml-side__empty">
+                {groupBy === 'tableGroup' && tableGroups.length === 0
+                  ? 'DBML içinde TableGroup yok.'
+                  : 'Eşleşen şema/tablo yok.'}
+              </div>
             )}
           </div>
         </div>
       </aside>
+
+      {dataModalTable && (
+        <div
+          className="dbml-data-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${dataModalTable.table.fullName} veri örneği`}
+          onClick={() => setDataModalTableId(null)}
+        >
+          <div className="dbml-data-modal__panel nodrag nopan" onClick={(event) => event.stopPropagation()}>
+            <div className="dbml-data-modal__header">
+              <div className="dbml-data-modal__title-wrap">
+                <span className="dbml-data-modal__table-icon" aria-hidden="true">
+                  <TableIcon />
+                </span>
+                <div>
+                  <div className="dbml-data-modal__eyebrow">Tablo verisi</div>
+                  <h3>{dataModalTable.table.fullName}</h3>
+                </div>
+                {dataModalTable.table.note && (
+                  <span className="dbml-data-modal__note" title={dataModalTable.table.note}>
+                    i
+                  </span>
+                )}
+              </div>
+              <div className="dbml-data-modal__actions">
+                <button type="button" className="dbml-toolbar__button" onClick={downloadSampleCsv}>
+                  İndir
+                </button>
+                <button
+                  type="button"
+                  className="dbml-toolbar__button"
+                  onClick={() => setDataModalTableId(null)}
+                  aria-label="Kapat"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+
+            <p className="dbml-data-modal__hint">
+              Örnek satırlar alan tiplerinden üretilir; gerçek veritabanı bağlantısı yoktur.
+            </p>
+
+            <div className="dbml-data-modal__table-wrap">
+              <table className="dbml-data-modal__table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    {dataModalTable.table.fields.map((field) => {
+                      const isFk = dataModalTable.foreignKeyFields.includes(field.name);
+                      return (
+                        <th key={field.name}>
+                          <div className="dbml-data-modal__col">
+                            <span className="dbml-data-modal__col-name">
+                              {field.settings.primaryKey && <span className="dbml-badge dbml-badge--pk">PK</span>}
+                              {isFk && <span className="dbml-badge dbml-badge--fk">FK</span>}
+                              {field.name}
+                            </span>
+                            <span className="dbml-data-modal__col-type">{field.type}</span>
+                          </div>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dataModalRows.map((row, rowIndex) => (
+                    <tr key={rowIndex}>
+                      <td>{rowIndex}</td>
+                      {dataModalTable.table.fields.map((field) => {
+                        const value = row[field.name];
+                        return (
+                          <td key={field.name} className={value === 'null' ? 'is-null' : undefined}>
+                            {value}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
