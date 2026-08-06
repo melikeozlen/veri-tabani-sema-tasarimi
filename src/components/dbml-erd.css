@@ -1375,7 +1375,7 @@
 
 .dbml-relation-label {
   position: absolute;
-  z-index: 8;
+  z-index: 30;
   min-width: 220px;
   max-width: 420px;
   padding: 10px 12px;

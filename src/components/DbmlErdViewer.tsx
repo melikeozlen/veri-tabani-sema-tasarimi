@@ -16,14 +16,16 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
+  useViewport,
   type Edge,
   type EdgeProps,
   type Node,
   type NodeProps,
+  type XYPosition,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
 
 // -----------------------------------------------------------------------------
 // DBML model types
@@ -132,6 +134,8 @@ interface RelationEdgeData extends Record<string, unknown> {
   targetField: string;
   dimmed: boolean;
   highlighted: boolean;
+  infoVisible?: boolean;
+  infoPointer?: XYPosition | null;
   showEdgeInfo?: boolean;
   onFocusTable?: (tableId: string) => void;
   onLabelHoverChange?: (edgeId: string | null) => void;
@@ -942,6 +946,36 @@ function JunctionMarker({
   );
 }
 
+function clampEdgeInfoAboveCursor(
+  cursorFlow: XYPosition,
+  size: { width: number; height: number },
+  gap: number,
+  flowToScreenPosition: (position: XYPosition) => XYPosition,
+  screenToFlowPosition: (position: XYPosition) => XYPosition,
+): XYPosition {
+  const pane = document.querySelector('.dbml-canvas .react-flow') as HTMLElement | null;
+  if (!pane) return cursorFlow;
+
+  const rect = pane.getBoundingClientRect();
+  const pad = 12;
+  const halfW = size.width / 2;
+  const cursor = flowToScreenPosition(cursorFlow);
+
+  const minX = rect.left + pad + halfW;
+  const maxX = rect.right - pad - halfW;
+  const minY = rect.top + pad + size.height + gap;
+  const maxY = rect.bottom - pad + gap;
+
+  const clampedScreen = {
+    x: minX > maxX ? (rect.left + rect.right) / 2 : Math.min(Math.max(cursor.x, minX), maxX),
+    y: minY > maxY ? (rect.top + rect.bottom) / 2 : Math.min(Math.max(cursor.y, minY), maxY),
+  };
+
+  return screenToFlowPosition(clampedScreen);
+}
+
+const EDGE_INFO_GAP = 12;
+
 const RelationEdge = memo(function RelationEdge({
   id,
   sourceX,
@@ -968,8 +1002,48 @@ const RelationEdge = memo(function RelationEdge({
   const highlighted = data?.highlighted ?? false;
   const [labelHovered, setLabelHovered] = useState(false);
   const active = selected || highlighted || labelHovered;
+  const showInfo =
+    Boolean(data) &&
+    data?.showEdgeInfo !== false &&
+    (Boolean(data?.infoVisible) || labelHovered);
   const sourceCardinality = data?.sourceCardinality ?? '1';
   const targetCardinality = data?.targetCardinality ?? 'N';
+  const { flowToScreenPosition, screenToFlowPosition } = useReactFlow();
+  const viewport = useViewport();
+  const labelRef = useRef<HTMLDivElement>(null);
+  const pointer = data?.infoPointer ?? null;
+  const preferred = pointer ?? { x: labelX, y: labelY };
+  const [infoPosition, setInfoPosition] = useState<XYPosition>(preferred);
+
+  useLayoutEffect(() => {
+    if (!showInfo) {
+      setInfoPosition(preferred);
+      return;
+    }
+
+    const rect = labelRef.current?.getBoundingClientRect();
+    const width = rect?.width && rect.width > 0 ? rect.width : 260;
+    const height = rect?.height && rect.height > 0 ? rect.height : 88;
+
+    setInfoPosition(
+      clampEdgeInfoAboveCursor(
+        preferred,
+        { width, height },
+        EDGE_INFO_GAP,
+        flowToScreenPosition,
+        screenToFlowPosition,
+      ),
+    );
+  }, [
+    flowToScreenPosition,
+    preferred.x,
+    preferred.y,
+    screenToFlowPosition,
+    showInfo,
+    viewport.x,
+    viewport.y,
+    viewport.zoom,
+  ]);
 
   function handleLabelEnter() {
     setLabelHovered(true);
@@ -1022,10 +1096,13 @@ const RelationEdge = memo(function RelationEdge({
           dimmed={dimmed}
         />
 
-        {active && data?.showEdgeInfo !== false && data && (
+        {showInfo && data && (
           <div
+            ref={labelRef}
             className="dbml-relation-label nodrag nopan"
-            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            style={{
+              transform: `translate(-50%, calc(-100% - ${EDGE_INFO_GAP}px)) translate(${infoPosition.x}px, ${infoPosition.y}px)`,
+            }}
             onMouseEnter={handleLabelEnter}
             onMouseLeave={handleLabelLeave}
           >
@@ -1491,6 +1568,7 @@ function DbmlErdViewerContent({
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [hoveredTableId, setHoveredTableId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
+  const [hoveredEdgePointer, setHoveredEdgePointer] = useState<XYPosition | null>(null);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
@@ -1518,6 +1596,13 @@ function DbmlErdViewerContent({
   const marqueeActiveRef = useRef(false);
   const edgeLeaveTimerRef = useRef<number | null>(null);
   const { fitView, fitBounds, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
+
+  const captureHoveredEdgePointer = useCallback(
+    (event: { clientX: number; clientY: number }) => {
+      setHoveredEdgePointer(screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+    },
+    [screenToFlowPosition],
+  );
 
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-theme', theme);
@@ -1805,6 +1890,7 @@ function DbmlErdViewerContent({
     else {
       edgeLeaveTimerRef.current = window.setTimeout(() => {
         setHoveredEdgeId(null);
+        setHoveredEdgePointer(null);
         edgeLeaveTimerRef.current = null;
       }, 120);
     }
@@ -1823,6 +1909,7 @@ function DbmlErdViewerContent({
           (edge.source === hoveredTableId || edge.target === hoveredTableId)) ||
         (selectedTable !== null &&
           (edge.source === selectedTable || edge.target === selectedTable));
+      const infoVisible = hoveredEdgeId === edge.id;
 
       return {
         ...edge,
@@ -1831,6 +1918,8 @@ function DbmlErdViewerContent({
           ...edge.data!,
           dimmed: relationMismatch || (searchDimmed && !highlighted),
           highlighted,
+          infoVisible,
+          infoPointer: infoVisible ? hoveredEdgePointer : null,
           showEdgeInfo,
           onFocusTable: selectAndFocusTable,
           onLabelHoverChange: handleEdgeLabelHoverChange,
@@ -1841,6 +1930,7 @@ function DbmlErdViewerContent({
     edges,
     handleEdgeLabelHoverChange,
     hoveredEdgeId,
+    hoveredEdgePointer,
     hoveredTableId,
     selectAndFocusTable,
     selectedTable,
@@ -2305,7 +2395,15 @@ function DbmlErdViewerContent({
           onNodeClick={(_, node) => setSelectedTable((current) => (current === node.id ? null : node.id))}
           onNodeMouseEnter={(_, node) => setHoveredTableId(node.id)}
           onNodeMouseLeave={() => setHoveredTableId(null)}
-          onEdgeMouseEnter={(_, edge) => {
+          onEdgeMouseEnter={(event, edge) => {
+            if (edgeLeaveTimerRef.current !== null) {
+              window.clearTimeout(edgeLeaveTimerRef.current);
+              edgeLeaveTimerRef.current = null;
+            }
+            setHoveredEdgeId(edge.id);
+            captureHoveredEdgePointer(event);
+          }}
+          onEdgeMouseMove={(_event, edge) => {
             if (edgeLeaveTimerRef.current !== null) {
               window.clearTimeout(edgeLeaveTimerRef.current);
               edgeLeaveTimerRef.current = null;
@@ -2315,12 +2413,14 @@ function DbmlErdViewerContent({
           onEdgeMouseLeave={() => {
             edgeLeaveTimerRef.current = window.setTimeout(() => {
               setHoveredEdgeId(null);
+              setHoveredEdgePointer(null);
               edgeLeaveTimerRef.current = null;
             }, 160);
           }}
           onPaneClick={() => {
             setSelectedTable(null);
             setHoveredEdgeId(null);
+            setHoveredEdgePointer(null);
           }}
           onMouseDown={(event) => {
             if (viewLocked) return;
