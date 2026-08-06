@@ -29,7 +29,7 @@ export default function App() {
   return (
     <DbmlErdViewer
       sources={sources}
-      title="CRM · Mantıksal Veri Modeli"
+      title=" · Mantıksal Veri Modeli"
       height="100vh"
     />
   );

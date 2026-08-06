@@ -1,4 +1,4 @@
-# CRM DBML ERD Viewer
+#  DBML ERD Viewer
 
 DBML metnini React Flow üzerinde otomatik ELK yerleşimiyle salt-okunur ER diyagramı olarak gösterir.
 

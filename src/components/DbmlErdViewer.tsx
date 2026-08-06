@@ -184,7 +184,7 @@ interface NavigatorGroup {
 
 // -----------------------------------------------------------------------------
 // Lightweight DBML parser
-// Supports the constructs used by the supplied CRM model:
+// Supports the constructs used by the supplied  model:
 // Table, Enum, TableGroup, table notes, field settings, standalone Ref and inline ref.
 // -----------------------------------------------------------------------------
 
