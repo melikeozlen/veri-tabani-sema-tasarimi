@@ -1644,12 +1644,14 @@ function DbmlErdViewerContent({
   });
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [viewLocked, setViewLocked] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
   const edgeLeaveTimerRef = useRef<number | null>(null);
+  const viewerRef = useRef<HTMLElement | null>(null);
   const { fitView, fitBounds, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
 
   const captureHoveredEdgePointer = useCallback(
@@ -1658,6 +1660,28 @@ function DbmlErdViewerContent({
     },
     [screenToFlowPosition],
   );
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    }
+
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      await viewerRef.current?.requestFullscreen();
+    } catch {
+      // Tarayıcı engellerse sessizce geç.
+    }
+  }
 
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-theme', theme);
@@ -2218,7 +2242,8 @@ function DbmlErdViewerContent({
 
   return (
     <section
-      className={`dbml-erd-viewer ${leftOpen ? 'is-left-open' : ''} ${rightOpen ? 'is-right-open' : ''}${isEditingSource ? ' is-editing-source' : ''} ${className}`.trim()}
+      ref={viewerRef}
+      className={`dbml-erd-viewer ${leftOpen ? 'is-left-open' : ''} ${rightOpen ? 'is-right-open' : ''}${isEditingSource ? ' is-editing-source' : ''}${isFullscreen ? ' is-fullscreen' : ''} ${className}`.trim()}
       data-theme={theme}
       data-scheme={THEME_META[theme].scheme}
       style={{ height }}
@@ -2508,7 +2533,39 @@ function DbmlErdViewerContent({
             color={THEME_META[theme].dot}
           />
           <MiniMap pannable zoomable position="bottom-right" nodeStrokeWidth={2} />
-          <Controls position="bottom-left" showInteractive={false}>
+          <Controls position="bottom-left" showInteractive={false} showFitView={false}>
+            <ControlButton
+              className={`dbml-fullscreen-button${isFullscreen ? ' is-fullscreen' : ''}`}
+              onClick={() => {
+                void toggleFullscreen();
+              }}
+              title={isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
+              aria-label={isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
+            >
+              {isFullscreen ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9 3v6H3M15 3v6h6M9 21v-6H3M15 21v-6h6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+            </ControlButton>
             <ControlButton
               className={`dbml-lock-button${viewLocked ? ' is-locked' : ''}`}
               onClick={() => {

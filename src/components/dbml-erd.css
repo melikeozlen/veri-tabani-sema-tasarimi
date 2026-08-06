@@ -270,12 +270,21 @@
 }
 
 .dbml-erd-viewer .react-flow__controls-button svg { fill: currentColor; }
-.dbml-erd-viewer .dbml-lock-button svg {
+.dbml-erd-viewer .dbml-lock-button svg,
+.dbml-erd-viewer .dbml-fullscreen-button svg {
   fill: none;
   stroke: currentColor;
 }
-.dbml-erd-viewer .dbml-lock-button.is-locked {
+.dbml-erd-viewer .dbml-lock-button.is-locked,
+.dbml-erd-viewer .dbml-fullscreen-button.is-fullscreen {
   color: var(--dbml-accent);
+}
+
+.dbml-erd-viewer:fullscreen,
+.dbml-erd-viewer.is-fullscreen {
+  width: 100%;
+  height: 100% !important;
+  border-radius: 0;
 }
 
 .dbml-erd-viewer .react-flow__minimap {
