@@ -1089,6 +1089,7 @@
   border-radius: 8px;
   background: var(--dbml-surface);
   box-shadow: var(--dbml-shadow);
+  transition: opacity 180ms ease;
 }
 
 .dbml-table-node.is-dimmed {
@@ -1326,7 +1327,7 @@
   stroke: var(--dbml-edge);
   stroke-width: 1.6;
   opacity: 0.72;
-  transition: stroke 120ms ease, stroke-width 120ms ease, opacity 120ms ease;
+  transition: stroke 120ms ease, stroke-width 120ms ease;
 }
 
 .dbml-erd-viewer[data-scheme="light"] .dbml-relation-edge {

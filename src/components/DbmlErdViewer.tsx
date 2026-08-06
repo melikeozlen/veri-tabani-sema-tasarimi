@@ -25,7 +25,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent } from 'react';
 
 // -----------------------------------------------------------------------------
 // DBML model types
@@ -1699,9 +1699,50 @@ function DbmlErdViewerContent({
   const [linkLoading, setLinkLoading] = useState(false);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
-  const edgeLeaveTimerRef = useRef<number | null>(null);
+  const hoverClearTimerRef = useRef<number | null>(null);
   const viewerRef = useRef<HTMLElement | null>(null);
   const { fitView, fitBounds, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
+
+  const cancelHoverClear = useCallback(() => {
+    if (hoverClearTimerRef.current === null) return;
+    window.clearTimeout(hoverClearTimerRef.current);
+    hoverClearTimerRef.current = null;
+  }, []);
+
+  const scheduleHoverClear = useCallback(() => {
+    cancelHoverClear();
+    hoverClearTimerRef.current = window.setTimeout(() => {
+      startTransition(() => {
+        setHoveredEdgeId(null);
+        setHoveredTableId(null);
+      });
+      hoverClearTimerRef.current = null;
+    }, 320);
+  }, [cancelHoverClear]);
+
+  const hoverEdge = useCallback(
+    (edgeId: string) => {
+      cancelHoverClear();
+      startTransition(() => {
+        setHoveredTableId(null);
+        setHoveredEdgeId((current) => (current === edgeId ? current : edgeId));
+      });
+    },
+    [cancelHoverClear],
+  );
+
+  const hoverTable = useCallback(
+    (tableId: string) => {
+      cancelHoverClear();
+      startTransition(() => {
+        setHoveredEdgeId(null);
+        setHoveredTableId((current) => (current === tableId ? current : tableId));
+      });
+    },
+    [cancelHoverClear],
+  );
+
+  useEffect(() => () => cancelHoverClear(), [cancelHoverClear]);
 
   useEffect(() => {
     function onFullscreenChange() {
@@ -2531,8 +2572,8 @@ function DbmlErdViewerContent({
             clearPinnedEdge();
             setSelectedTable((current) => (current === node.id ? null : node.id));
           }}
-          onNodeMouseEnter={(_, node) => setHoveredTableId(node.id)}
-          onNodeMouseLeave={() => setHoveredTableId(null)}
+          onNodeMouseEnter={(_, node) => hoverTable(node.id)}
+          onNodeMouseLeave={() => scheduleHoverClear()}
           onEdgeClick={(event, edge) => {
             if (!showEdgeInfo) {
               clearPinnedEdge();
@@ -2540,27 +2581,13 @@ function DbmlErdViewerContent({
             }
             pinEdgeAtEvent(edge.id, event);
           }}
-          onEdgeMouseEnter={(_event, edge) => {
-            if (edgeLeaveTimerRef.current !== null) {
-              window.clearTimeout(edgeLeaveTimerRef.current);
-              edgeLeaveTimerRef.current = null;
-            }
-            setHoveredEdgeId(edge.id);
-          }}
-          onEdgeMouseMove={(_event, edge) => {
-            if (edgeLeaveTimerRef.current !== null) {
-              window.clearTimeout(edgeLeaveTimerRef.current);
-              edgeLeaveTimerRef.current = null;
-            }
-            setHoveredEdgeId(edge.id);
-          }}
-          onEdgeMouseLeave={() => {
-            edgeLeaveTimerRef.current = window.setTimeout(() => {
-              setHoveredEdgeId(null);
-              edgeLeaveTimerRef.current = null;
-            }, 160);
-          }}
+          onEdgeMouseEnter={(_event, edge) => hoverEdge(edge.id)}
+          onEdgeMouseMove={(_event, edge) => hoverEdge(edge.id)}
+          onEdgeMouseLeave={() => scheduleHoverClear()}
           onPaneClick={() => {
+            cancelHoverClear();
+            setHoveredEdgeId(null);
+            setHoveredTableId(null);
             setSelectedTable(null);
             clearPinnedEdge();
           }}
