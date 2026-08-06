@@ -35,6 +35,21 @@ type Cardinality = '1' | 'N';
 type RelationOperator = '>' | '<' | '-' | '<>';
 type SearchScope = 'schema' | 'table' | 'column';
 
+/** DBML ilişki operatörlerini normalize eder (?> / <? / -< vb. dahil). */
+function normalizeRelationOperator(raw: string): RelationOperator | null {
+  const op = raw.trim();
+  if (op === '<>' || op === '><') return '<>';
+  if (op === '>' || op === '?>' || op === '->') return '>';
+  if (op === '<' || op === '<?' || op === '<-') return '<';
+  if (op === '-' || op === '--') return '-';
+  // -< one-to-many, >- many-to-one (dbdiagram short forms)
+  if (op === '-<' || op === '-o<' || op === '-*') return '<';
+  if (op === '>-' || op === '>o-' || op === '*-') return '>';
+  return null;
+}
+
+const RELATION_OPERATOR_PATTERN = '<>|<\\?|\\?>|><|-<|>-|-o<|>o-|-\\*|\\*-|->|<-|--|>|<|-';
+
 const ALL_SEARCH_SCOPES: SearchScope[] = ['schema', 'table', 'column'];
 
 type SearchScopeFilter = SearchScope | 'all';
@@ -642,16 +657,19 @@ function parseDbml(source: string): ParseResult {
 
   while ((refMatch = refLinePattern.exec(cleanSource)) !== null) {
     const expression = refMatch[1].trim();
-    const relationMatch = expression.match(/^(.+?)\s+(<>|>|<|-)\s+(.+?)(?:\s+\[[^\]]*\])?\s*$/);
+    const relationMatch = expression.match(
+      new RegExp(`^(.+?)\\s+(${RELATION_OPERATOR_PATTERN})\\s+(.+?)(?:\\s+\\[[^\\]]*\\])?\\s*$`),
+    );
 
     if (!relationMatch) {
       warnings.push(`İlişki okunamadı: ${expression}`);
       continue;
     }
 
+    const operator = normalizeRelationOperator(relationMatch[2]);
     const left = splitEndpoint(relationMatch[1]);
     const right = splitEndpoint(relationMatch[3]);
-    if (!left || !right) {
+    if (!operator || !left || !right) {
       warnings.push(`Bileşik veya geçersiz ilişki atlandı: ${expression}`);
       continue;
     }
@@ -659,7 +677,7 @@ function parseDbml(source: string): ParseResult {
     rawRelations.push({
       left,
       right,
-      operator: relationMatch[2] as RelationOperator,
+      operator,
     });
   }
 
@@ -667,21 +685,24 @@ function parseDbml(source: string): ParseResult {
     for (const field of table.fields) {
       if (!field.settings.inlineRef) continue;
 
-      const inlineMatch = field.settings.inlineRef.match(/^(<>|>|<|-)\s+(.+)$/);
+      const inlineMatch = field.settings.inlineRef.match(
+        new RegExp(`^(${RELATION_OPERATOR_PATTERN})\\s+(.+)$`),
+      );
       if (!inlineMatch) {
         warnings.push(`Inline ref okunamadı: ${table.fullName}.${field.name}`);
         continue;
       }
 
+      const operator = normalizeRelationOperator(inlineMatch[1]);
       const right = splitEndpoint(inlineMatch[2]);
-      if (!right) {
+      if (!operator || !right) {
         warnings.push(`Inline ref hedefi okunamadı: ${field.settings.inlineRef}`);
         continue;
       }
 
       rawRelations.push({
         left: { table: table.fullName, field: field.name },
-        operator: inlineMatch[1] as RelationOperator,
+        operator,
         right,
       });
     }
