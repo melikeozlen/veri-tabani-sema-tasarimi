@@ -1,0 +1,9 @@
+# Railway: yalnızca API (frontend Vercel'de)
+[build]
+builder = "NIXPACKS"
+buildCommand = "npm install --include=dev"
+
+[deploy]
+startCommand = "npm run start:api"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3

@@ -24,6 +24,7 @@
     "jose": "^6.0.12",
     "react": "latest",
     "react-dom": "latest",
+    "tsx": "^4.20.5",
     "vite": "latest"
   },
   "devDependencies": {
@@ -31,7 +32,6 @@
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "concurrently": "^9.2.1",
-    "tsx": "^4.20.5",
     "typescript": "latest",
     "@types/node": "^24.3.0"
   }
