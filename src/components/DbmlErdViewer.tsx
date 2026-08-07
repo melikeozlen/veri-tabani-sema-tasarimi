@@ -2118,9 +2118,12 @@ function DbmlErdViewerContent({
           searchScopes,
           tableGroupNameById.get(node.id),
         );
+      const searchHit = normalizedSearch.length > 0 && !searchMismatch;
       const relationMismatch = selectedTable !== null && !connectedTableIds.has(node.id);
       const hoverActive = hoveredTableId !== null || hoveredEdgeId !== null || pinnedEdgeId !== null;
-      const hoverDim = hoverActive && !selectedTable && !hoverConnectedIds.has(node.id);
+      // Filtre eşleşen tablolar hover ile soluklaşmasın; eşleşmeyenler CSS :hover ile renklensin.
+      const hoverDim =
+        hoverActive && !selectedTable && !hoverConnectedIds.has(node.id) && !searchHit;
       const isHidden = hiddenTableIds.has(node.id);
 
       return {

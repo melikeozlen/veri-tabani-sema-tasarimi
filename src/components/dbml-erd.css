@@ -1223,6 +1223,17 @@ body.dbml-resizing-side * {
 
 .dbml-table-node.is-dimmed {
   opacity: var(--dbml-dim);
+  transition: opacity 180ms ease;
+}
+
+.dbml-erd-viewer .react-flow__node:hover .dbml-table-node.is-dimmed,
+.dbml-table-node.is-dimmed:hover {
+  opacity: 1;
+}
+
+.dbml-erd-viewer .react-flow__node:has(.dbml-table-node.is-dimmed:hover),
+.dbml-erd-viewer .react-flow__node:hover:has(.dbml-table-node.is-dimmed) {
+  z-index: 12 !important;
 }
 
 .dbml-table-node__header {
