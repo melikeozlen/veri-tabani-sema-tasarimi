@@ -20,10 +20,24 @@ export type ServiceAccountCredentials = {
 };
 
 function loadServiceAccount(): ServiceAccountCredentials {
+  // Production (Railway): email + key tercih edilir.
+  const email = optional('GOOGLE_SERVICE_ACCOUNT_EMAIL');
+  const privateKey = optional('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n');
+  if (email && privateKey) {
+    return { client_email: email, private_key: privateKey };
+  }
+
   const filePath = optional('GOOGLE_SERVICE_ACCOUNT_FILE');
   if (filePath) {
+    // Yanlışlıkla email bu alana yazılmışsa net hata ver.
+    if (filePath.includes('@') && !filePath.includes('/') && !/\.json$/i.test(filePath)) {
+      throw new Error(
+        'GOOGLE_SERVICE_ACCOUNT_FILE dosya yolu olmalı. Email için GOOGLE_SERVICE_ACCOUNT_EMAIL, anahtar için GOOGLE_PRIVATE_KEY kullanın.',
+      );
+    }
+
+    const absolute = resolve(process.cwd(), filePath);
     try {
-      const absolute = resolve(process.cwd(), filePath);
       const raw = JSON.parse(readFileSync(absolute, 'utf8')) as {
         client_email?: string;
         private_key?: string;
@@ -36,25 +50,18 @@ function loadServiceAccount(): ServiceAccountCredentials {
         private_key: raw.private_key,
       };
     } catch (error) {
-      // Production'da dosya yoksa EMAIL + PRIVATE_KEY'e düş.
-      const email = optional('GOOGLE_SERVICE_ACCOUNT_EMAIL');
-      const privateKey = optional('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n');
-      if (email && privateKey) {
-        return { client_email: email, private_key: privateKey };
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+        throw new Error(
+          `Service account dosyası bulunamadı: ${filePath}. Railway’de GOOGLE_SERVICE_ACCOUNT_FILE’ı silip GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY kullanın.`,
+        );
       }
       throw error;
     }
   }
 
-  const email = optional('GOOGLE_SERVICE_ACCOUNT_EMAIL');
-  const privateKey = optional('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n');
-  if (!email || !privateKey) {
-    throw new Error(
-      'GOOGLE_SERVICE_ACCOUNT_FILE veya GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY tanımlayın.',
-    );
-  }
-
-  return { client_email: email, private_key: privateKey };
+  throw new Error(
+    'GOOGLE_SERVICE_ACCOUNT_EMAIL + GOOGLE_PRIVATE_KEY veya GOOGLE_SERVICE_ACCOUNT_FILE tanımlayın.',
+  );
 }
 
 export const env = {
