@@ -1382,6 +1382,18 @@
   background: var(--dbml-green-soft);
 }
 
+.dbml-badge--enum {
+  color: #b45309;
+  border-color: #b45309;
+  background: color-mix(in srgb, #b45309 14%, transparent);
+}
+
+.dbml-erd-viewer[data-scheme="dark"] .dbml-badge--enum {
+  color: #fbbf24;
+  border-color: #fbbf24;
+  background: color-mix(in srgb, #fbbf24 16%, transparent);
+}
+
 .dbml-field__handle {
   width: 11px !important;
   height: 11px !important;
@@ -1916,6 +1928,7 @@
 .dbml-legend__dot { width: 7px; height: 7px; border-radius: 50%; }
 .dbml-legend__dot--pk { background: var(--dbml-yellow); }
 .dbml-legend__dot--fk { background: var(--dbml-accent); }
+.dbml-legend__dot--enum { background: #b45309; }
 .dbml-legend__dot--ai { background: var(--dbml-green); }
 .dbml-legend__hint { color: var(--dbml-muted); }
 

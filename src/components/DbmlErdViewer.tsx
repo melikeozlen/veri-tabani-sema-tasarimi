@@ -496,6 +496,25 @@ function parseEnum(block: NamedBlock): DbmlEnum {
   return { name: block.name, values };
 }
 
+function resolveEnumValues(type: string, enums: DbmlEnum[]): string[] | undefined {
+  const normalized = type.trim().replace(/\[\]\s*$/, '');
+  if (!normalized) return undefined;
+
+  const exact = enums.find((item) => item.name === normalized);
+  if (exact) return exact.values;
+
+  const suffixMatches = enums.filter(
+    (item) => item.name.endsWith(`.${normalized}`) || item.name === normalized,
+  );
+  if (suffixMatches.length === 1) return suffixMatches[0].values;
+
+  const byShortName = enums.filter((item) => {
+    const short = item.name.includes('.') ? item.name.slice(item.name.lastIndexOf('.') + 1) : item.name;
+    return short === normalized;
+  });
+  return byShortName.length === 1 ? byShortName[0].values : undefined;
+}
+
 function parseTable(block: NamedBlock): DbmlTable {
   const qualified = splitQualifiedName(block.name);
   const tableName = qualified.at(-1)!;
@@ -615,11 +634,10 @@ function parseDbml(source: string): ParseResult {
   const cleanSource = stripComments(source);
   const blocks = extractNamedBlocks(cleanSource);
   const enums = blocks.filter((block) => block.kind === 'Enum').map(parseEnum);
-  const enumMap = new Map(enums.map((item) => [item.name, item.values]));
   const tables = blocks.filter((block) => block.kind === 'Table').map(parseTable);
   for (const table of tables) {
     for (const field of table.fields) {
-      const enumValues = enumMap.get(field.type);
+      const enumValues = resolveEnumValues(field.type, enums);
       if (enumValues) field.enumValues = enumValues;
     }
   }
@@ -752,7 +770,7 @@ function parseDbml(source: string): ParseResult {
 // React Flow custom node and edge
 // -----------------------------------------------------------------------------
 
-function badgeClass(kind: 'pk' | 'fk' | 'nn' | 'uq' | 'ai'): string {
+function badgeClass(kind: 'pk' | 'fk' | 'nn' | 'uq' | 'ai' | 'enum'): string {
   return `dbml-badge dbml-badge--${kind}`;
 }
 
@@ -873,15 +891,15 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
               <div className="dbml-field__badges">
                 {field.settings.primaryKey && <span className={badgeClass('pk')}>PK</span>}
                 {isForeignKey && <span className={badgeClass('fk')}>FK</span>}
+                {field.enumValues && field.enumValues.length > 0 && (
+                  <span className={badgeClass('enum')} title={`${field.type}: ${field.enumValues.join(', ')}`}>
+                    E
+                  </span>
+                )}
               </div>
 
               <div className="dbml-field__name">{field.name}</div>
-              <div
-                className="dbml-field__type"
-                title={field.enumValues ? `${field.type}: ${field.enumValues.join(', ')}` : undefined}
-              >
-                {field.type}
-              </div>
+              <div className="dbml-field__type">{field.type}</div>
 
               <div className="dbml-field__constraints">
                 {field.settings.notNull && <span className={badgeClass('nn')}>NN</span>}
@@ -2826,6 +2844,7 @@ function DbmlErdViewerContent({
           <Panel position="bottom-left" className="dbml-legend nodrag nopan">
             <span><b className="dbml-legend__dot dbml-legend__dot--pk" />PK</span>
             <span><b className="dbml-legend__dot dbml-legend__dot--fk" />FK</span>
+            <span><b className="dbml-legend__dot dbml-legend__dot--enum" />E Enum</span>
             <span><b className="dbml-legend__dot dbml-legend__dot--ai" />AI Auto Increment</span>
             <span><b>1</b> Tek</span>
             <span><b>N</b> Çok</span>
