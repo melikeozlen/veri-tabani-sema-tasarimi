@@ -925,12 +925,50 @@ body.dbml-resizing-side * {
 }
 
 .dbml-side__warning {
-  padding: 8px 10px;
   border-radius: 8px;
   color: var(--dbml-warn-text);
   background: var(--dbml-warn-bg);
   font-size: 11px;
+  overflow: hidden;
+}
+
+.dbml-side__warning-toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbml-side__warning-toggle:hover {
+  background: color-mix(in srgb, var(--dbml-warn-text) 10%, transparent);
+}
+
+.dbml-side__warning-chevron {
+  opacity: 0.7;
+}
+
+.dbml-side__warning-list {
+  max-height: 180px;
+  margin: 0;
+  padding: 0 10px 10px 26px;
+  overflow: auto;
+  color: var(--dbml-warn-text);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+.dbml-side__warning-list li + li {
+  margin-top: 4px;
 }
 
 .dbml-side__empty {
@@ -2226,5 +2264,8 @@ body.dbml-resizing-side * {
 }
 
 .dbml-side__drive {
+  display: none;
+}
+.dbml-side__warning {
   display: none;
 }

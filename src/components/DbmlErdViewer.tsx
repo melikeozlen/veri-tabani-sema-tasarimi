@@ -35,7 +35,7 @@ import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersist
 
 type Cardinality = '1' | 'N';
 type RelationOperator = '>' | '<' | '-' | '<>';
-type SearchScope = 'schema' | 'table' | 'column';
+type SearchScope = 'schema' | 'group' | 'table' | 'column';
 
 /** DBML ilişki operatörlerini normalize eder (?> / <? / -< vb. dahil). */
 function normalizeRelationOperator(raw: string): RelationOperator | null {
@@ -52,13 +52,14 @@ function normalizeRelationOperator(raw: string): RelationOperator | null {
 
 const RELATION_OPERATOR_PATTERN = '<>|<\\?|\\?>|><|-<|>-|-o<|>o-|-\\*|\\*-|->|<-|--|>|<|-';
 
-const ALL_SEARCH_SCOPES: SearchScope[] = ['schema', 'table', 'column'];
+const ALL_SEARCH_SCOPES: SearchScope[] = ['schema', 'group', 'table', 'column'];
 
 type SearchScopeFilter = SearchScope | 'all';
 
 const SEARCH_SCOPE_OPTIONS: Array<{ id: SearchScopeFilter; label: string }> = [
   { id: 'all', label: 'Tümü' },
   { id: 'schema', label: 'Şema adı' },
+  { id: 'group', label: 'Grup adı' },
   { id: 'table', label: 'Tablo adı' },
   { id: 'column', label: 'Kolon adı' },
 ];
@@ -103,6 +104,7 @@ interface DbmlTable {
 interface DbmlTableGroup {
   name: string;
   members: string[];
+  color?: string;
 }
 
 interface RefEndpoint {
@@ -249,6 +251,7 @@ interface NamedBlock {
   kind: 'Table' | 'Enum' | 'TableGroup';
   name: string;
   alias?: string;
+  settings?: string;
   body: string;
 }
 
@@ -286,8 +289,9 @@ function findClosingBrace(source: string, openingIndex: number): number {
 
 function extractNamedBlocks(source: string): NamedBlock[] {
   const blocks: NamedBlock[] = [];
+  // İsimden sonra isteğe bağlı `as alias` ve `[color: ...]` gibi ayarlar gelebilir.
   const pattern =
-    /\b(TableGroup|Table|Enum)\s+("(?:\\.|[^"])+"|[\w.-]+)(?:\s+as\s+("(?:\\.|[^"])+"|[\w.-]+))?\s*\{/g;
+    /\b(TableGroup|Table|Enum)\s+("(?:\\.|[^"])+"|[\w.-]+)(?:\s+as\s+("(?:\\.|[^"])+"|[\w.-]+))?(?:\s*\[([\s\S]*?)\])?\s*\{/g;
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(source)) !== null) {
@@ -299,6 +303,7 @@ function extractNamedBlocks(source: string): NamedBlock[] {
       kind: match[1] as 'TableGroup' | 'Table' | 'Enum',
       name: unquote(match[2]),
       alias: match[3] ? unquote(match[3]) : undefined,
+      settings: match[4]?.trim() || undefined,
       body: source.slice(openingIndex + 1, closingIndex),
     });
 
@@ -306,6 +311,36 @@ function extractNamedBlocks(source: string): NamedBlock[] {
   }
 
   return blocks;
+}
+
+function parseBlockColor(settingsText: string | undefined): string | undefined {
+  if (!settingsText) return undefined;
+  try {
+    for (const rawItem of splitSettings(settingsText)) {
+      const item = rawItem.trim();
+      const match = item.match(/^color\s*:\s*(.+)$/i);
+      if (!match) continue;
+      const value = match[1].trim().replace(/^['"]|['"]$/g, '').replace(/;$/, '');
+      if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(value)) return value;
+      if (/^rgba?\([\d\s.,%]+\)$/i.test(value)) return value;
+      if (/^[a-zA-Z]{3,30}$/.test(value)) return value;
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+/** Geçersiz/eksik renklerde her zaman güvenli bir varsayılan döner. */
+function resolveGroupColor(color: string | undefined, fallbackKey: string, corporate = false): string {
+  const fallback = colorForKey(fallbackKey, corporate);
+  if (!color || typeof color !== 'string') return fallback;
+  const trimmed = color.trim();
+  if (!trimmed) return fallback;
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed)) return trimmed;
+  if (/^rgba?\([\d\s.,%]+\)$/i.test(trimmed)) return trimmed;
+  if (/^[a-zA-Z]{3,30}$/.test(trimmed)) return trimmed;
+  return fallback;
 }
 
 function splitQualifiedName(value: string): string[] {
@@ -346,6 +381,29 @@ function splitEndpoint(value: string): RefEndpoint | null {
     table: parts.slice(0, -1).join('.'),
     field: parts.at(-1)!,
   };
+}
+
+/** Tek kolon veya bileşik `table.(a, b)` uçlarını çözer. */
+function parseRelationSide(value: string): { table: string; fields: string[] } | null {
+  const cleaned = value
+    .trim()
+    .replace(/\s*\[[\s\S]*$/, '')
+    .trim();
+
+  const composite = cleaned.match(/^(.+?)\.\((.+)\)$/);
+  if (composite) {
+    const table = composite[1].trim().replace(/^\(+|\)+$/g, '');
+    const fields = composite[2]
+      .split(',')
+      .map((part) => unquote(part.trim()))
+      .filter(Boolean);
+    if (!table || fields.length === 0) return null;
+    return { table, fields };
+  }
+
+  const simple = splitEndpoint(cleaned);
+  if (!simple) return null;
+  return { table: simple.table, fields: [simple.field] };
 }
 
 function findTopLevelBracket(value: string): number {
@@ -644,6 +702,12 @@ function parseDbml(source: string): ParseResult {
   }
 
   const warnings: string[] = [];
+  const seenWarnings = new Set<string>();
+  function pushWarning(message: string) {
+    if (seenWarnings.has(message)) return;
+    seenWarnings.add(message);
+    warnings.push(message);
+  }
   const tableGroups: DbmlTableGroup[] = [];
 
   for (const block of blocks.filter((item) => item.kind === 'TableGroup')) {
@@ -655,14 +719,18 @@ function parseDbml(source: string): ParseResult {
       if (!identifier) continue;
       const resolved = resolveTableName(identifier.identifier, tables);
       if (!resolved) {
-        warnings.push(`TableGroup "${block.name}" içinde tablo bulunamadı: ${identifier.identifier}`);
+        pushWarning(`TableGroup "${block.name}" içinde tablo bulunamadı: ${identifier.identifier}`);
         continue;
       }
       members.push(resolved);
       const table = tables.find((item) => item.id === resolved);
       if (table && !table.tableGroup) table.tableGroup = block.name;
     }
-    tableGroups.push({ name: block.name, members });
+    tableGroups.push({
+      name: block.name,
+      members,
+      color: parseBlockColor(block.settings),
+    });
   }
 
   const rawRelations: Array<{
@@ -677,26 +745,33 @@ function parseDbml(source: string): ParseResult {
   while ((refMatch = refLinePattern.exec(cleanSource)) !== null) {
     const expression = refMatch[1].trim();
     const relationMatch = expression.match(
-      new RegExp(`^(.+?)\\s+(${RELATION_OPERATOR_PATTERN})\\s+(.+?)(?:\\s+\\[[^\\]]*\\])?\\s*$`),
+      new RegExp(`^(.+?)\\s+(${RELATION_OPERATOR_PATTERN})\\s+(.+?)(?:\\s*\\[[^\\]]*\\])?\\s*$`),
     );
 
     if (!relationMatch) {
-      warnings.push(`İlişki okunamadı: ${expression}`);
+      pushWarning(`İlişki okunamadı: ${expression}`);
       continue;
     }
 
     const operator = normalizeRelationOperator(relationMatch[2]);
-    const left = splitEndpoint(relationMatch[1]);
-    const right = splitEndpoint(relationMatch[3]);
-    if (!operator || !left || !right) {
-      warnings.push(`Bileşik veya geçersiz ilişki atlandı: ${expression}`);
+    const leftSide = parseRelationSide(relationMatch[1]);
+    const rightSide = parseRelationSide(relationMatch[3]);
+    if (!operator || !leftSide || !rightSide) {
+      pushWarning(`İlişki uçları çözülemedi: ${expression}`);
       continue;
     }
 
-    rawRelations.push({
-      left,
-      right,
-      operator,
+    if (leftSide.fields.length !== rightSide.fields.length) {
+      pushWarning(`Bileşik ilişkide kolon sayıları eşleşmiyor: ${expression}`);
+      continue;
+    }
+
+    leftSide.fields.forEach((leftField, fieldIndex) => {
+      rawRelations.push({
+        left: { table: leftSide.table, field: leftField },
+        operator,
+        right: { table: rightSide.table, field: rightSide.fields[fieldIndex] },
+      });
     });
   }
 
@@ -708,21 +783,21 @@ function parseDbml(source: string): ParseResult {
         new RegExp(`^(${RELATION_OPERATOR_PATTERN})\\s+(.+)$`),
       );
       if (!inlineMatch) {
-        warnings.push(`Inline ref okunamadı: ${table.fullName}.${field.name}`);
+        pushWarning(`Inline ref okunamadı: ${table.fullName}.${field.name}`);
         continue;
       }
 
       const operator = normalizeRelationOperator(inlineMatch[1]);
-      const right = splitEndpoint(inlineMatch[2]);
-      if (!operator || !right) {
-        warnings.push(`Inline ref hedefi okunamadı: ${field.settings.inlineRef}`);
+      const rightSide = parseRelationSide(inlineMatch[2]);
+      if (!operator || !rightSide || rightSide.fields.length !== 1) {
+        pushWarning(`Inline ref hedefi okunamadı: ${field.settings.inlineRef}`);
         continue;
       }
 
       rawRelations.push({
         left: { table: table.fullName, field: field.name },
         operator,
-        right,
+        right: { table: rightSide.table, field: rightSide.fields[0] },
       });
     }
   }
@@ -735,7 +810,7 @@ function parseDbml(source: string): ParseResult {
     const rightTable = resolveTableName(rawRelation.right.table, tables);
 
     if (!leftTable || !rightTable) {
-      warnings.push(
+      pushWarning(
         `Tablosu bulunamayan ilişki: ${rawRelation.left.table}.${rawRelation.left.field} ${rawRelation.operator} ${rawRelation.right.table}.${rawRelation.right.field}`,
       );
       return;
@@ -751,7 +826,7 @@ function parseDbml(source: string): ParseResult {
       ?.fields.some((field) => field.name === right.field);
 
     if (!leftFieldExists || !rightFieldExists) {
-      warnings.push(
+      pushWarning(
         `Kolonu bulunamayan ilişki: ${left.table}.${left.field} ${rawRelation.operator} ${right.table}.${right.field}`,
       );
       return;
@@ -1392,7 +1467,7 @@ function groupTablesByTableGroup(
     result.push({
       id: `group:${group.name}`,
       name: group.name,
-      color: colorForKey(group.name, corporate),
+      color: resolveGroupColor(group.color, group.name, corporate),
       tables: groupTables.sort((left, right) => left.name.localeCompare(right.name, 'tr')),
     });
   }
@@ -1603,13 +1678,23 @@ function matchesSearch(
   normalizedSearch: string,
   scopes: SearchScope[],
   groupName?: string,
+  groupBy: 'schema' | 'tableGroup' = 'schema',
 ): boolean {
   if (!normalizedSearch) return true;
   if (scopes.length === 0) return true;
 
   if (scopes.includes('schema')) {
-    const schemaText = `${table.schema ?? ''} ${groupName ?? ''}`.toLocaleLowerCase('tr-TR');
+    const schemaLabel = table.schema ?? (groupBy === 'schema' ? groupName ?? '' : '');
+    const schemaText = `${table.schema ?? ''} ${schemaLabel}`.toLocaleLowerCase('tr-TR');
     if (schemaText.includes(normalizedSearch)) return true;
+    if (!table.schema && '(şemasız)'.includes(normalizedSearch)) return true;
+  }
+
+  if (scopes.includes('group')) {
+    const groupLabel = table.tableGroup ?? (groupBy === 'tableGroup' ? groupName ?? '' : '');
+    const groupText = `${table.tableGroup ?? ''} ${groupLabel}`.toLocaleLowerCase('tr-TR');
+    if (groupText.includes(normalizedSearch)) return true;
+    if (!table.tableGroup && '(grupsuz)'.includes(normalizedSearch)) return true;
   }
 
   if (scopes.includes('table')) {
@@ -1733,6 +1818,7 @@ function DbmlErdViewerContent({
   const [hiddenTableIds, setHiddenTableIds] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<'schema' | 'tableGroup'>('schema');
   const [groupByOpen, setGroupByOpen] = useState(false);
+  const [warningsOpen, setWarningsOpen] = useState(false);
   const [showEdgeInfo, setShowEdgeInfo] = useState(() => {
     if (typeof window === 'undefined') return true;
     return window.localStorage.getItem('dbml-erd-edge-info') !== '0';
@@ -2023,6 +2109,7 @@ function DbmlErdViewerContent({
     setCollapsedGroups(new Set());
     setHiddenTableIds(new Set());
     setGroupByOpen(false);
+    setWarningsOpen(false);
     setDataModalTableId(null);
   }, [dbml]);
 
@@ -2042,19 +2129,23 @@ function DbmlErdViewerContent({
     return navigatorGroups
       .map((group) => {
         const groupMatch =
-          searchScopes.includes('schema') &&
-          group.name.toLocaleLowerCase('tr-TR').includes(normalizedSearch);
+          (groupBy === 'schema' &&
+            searchScopes.includes('schema') &&
+            group.name.toLocaleLowerCase('tr-TR').includes(normalizedSearch)) ||
+          (groupBy === 'tableGroup' &&
+            searchScopes.includes('group') &&
+            group.name.toLocaleLowerCase('tr-TR').includes(normalizedSearch));
         return {
           ...group,
           tables: groupMatch
             ? group.tables
             : group.tables.filter((table) =>
-                matchesSearch(table, normalizedSearch, searchScopes, group.name),
+                matchesSearch(table, normalizedSearch, searchScopes, group.name, groupBy),
               ),
         };
       })
       .filter((group) => group.tables.length > 0);
-  }, [navigatorGroups, normalizedSearch, searchScopes]);
+  }, [groupBy, navigatorGroups, normalizedSearch, searchScopes]);
 
   const tableGroupNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -2117,6 +2208,7 @@ function DbmlErdViewerContent({
           normalizedSearch,
           searchScopes,
           tableGroupNameById.get(node.id),
+          groupBy,
         );
       const searchHit = normalizedSearch.length > 0 && !searchMismatch;
       const relationMismatch = selectedTable !== null && !connectedTableIds.has(node.id);
@@ -3032,7 +3124,7 @@ function DbmlErdViewerContent({
               onKeyDown={(event) => {
                 if (event.key === 'Enter') focusSearchResult();
               }}
-              placeholder="Şema, tablo veya kolon"
+              placeholder="Şema, grup, tablo veya kolon"
             />
             {searchTerm && (
               <button type="button" onClick={() => setSearchTerm('')} aria-label="Aramayı temizle">
@@ -3064,8 +3156,28 @@ function DbmlErdViewerContent({
           </div>
 
           {warnings.length > 0 && (
-            <div className="dbml-side__warning" title={warnings.join('\n')}>
-              {warnings.length} uyarı
+            <div className={`dbml-side__warning${warningsOpen ? ' is-open' : ''}`}>
+              <button
+                type="button"
+                className="dbml-side__warning-toggle"
+                onClick={() => setWarningsOpen((open) => !open)}
+                aria-expanded={warningsOpen}
+                title="DBML parse uyarılarını göster"
+              >
+                <span>
+                  <strong>{warnings.length}</strong> uyarı
+                </span>
+                <span className="dbml-side__warning-chevron" aria-hidden="true">
+                  {warningsOpen ? '▴' : '▾'}
+                </span>
+              </button>
+              {warningsOpen && (
+                <ul className="dbml-side__warning-list">
+                  {warnings.map((warning, index) => (
+                    <li key={`${index}-${warning.slice(0, 40)}`}>{warning}</li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
 
