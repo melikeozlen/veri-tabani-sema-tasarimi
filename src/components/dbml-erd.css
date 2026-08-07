@@ -1000,9 +1000,15 @@ body.dbml-resizing-side * {
 .dbml-schema-group__header-row,
 .dbml-schema-group__table-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 2px;
+  gap: 0;
+}
+
+.dbml-schema-group__actions {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
 }
 
 .dbml-schema-group__header {
@@ -1012,7 +1018,7 @@ body.dbml-resizing-side * {
   grid-template-columns: 14px 16px 8px minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
-  padding: 8px 6px 8px 8px;
+  padding: 6px 4px 6px 8px;
   border: 0;
   color: inherit;
   background: var(--dbml-surface-2);
@@ -1062,7 +1068,7 @@ body.dbml-resizing-side * {
 .dbml-schema-group__tables {
   display: flex;
   flex-direction: column;
-  padding: 4px;
+  padding: 2px 4px 4px;
 }
 
 .dbml-schema-group__table {
@@ -1071,8 +1077,8 @@ body.dbml-resizing-side * {
   display: grid;
   grid-template-columns: 16px minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
-  padding: 7px 6px;
+  gap: 6px;
+  padding: 4px 6px;
   border: 0;
   border-radius: 6px;
   color: var(--dbml-text);
@@ -1194,8 +1200,8 @@ body.dbml-resizing-side * {
 }
 
 .dbml-visibility-button {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1209,6 +1215,10 @@ body.dbml-resizing-side * {
 .dbml-visibility-button:hover {
   color: var(--dbml-text-strong);
   background: var(--dbml-hover);
+}
+
+.dbml-visibility-button.is-copied {
+  animation: dbml-title-pop 280ms ease;
 }
 
 .dbml-rail-toggle {

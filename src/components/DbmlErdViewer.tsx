@@ -1519,6 +1519,21 @@ function TableIcon() {
   );
 }
 
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <rect x="8" y="8" width="11" height="11" rx="2" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <path
+        d="M6 14H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function EyeIcon({ closed = false }: { closed?: boolean }) {
   if (closed) {
     return (
@@ -2372,6 +2387,22 @@ function DbmlErdViewerContent({
       else next.add(tableId);
       return next;
     });
+  }
+
+  async function copyNavigatorText(value: string, event: MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const button = event.currentTarget as HTMLButtonElement;
+    try {
+      await navigator.clipboard.writeText(value);
+      button.classList.remove('is-copied');
+      // reflow so animation restarts on rapid clicks
+      void button.offsetWidth;
+      button.classList.add('is-copied');
+      window.setTimeout(() => button.classList.remove('is-copied'), 280);
+    } catch {
+      // Clipboard API yoksa sessizce geç.
+    }
   }
 
   function toggleGroupVisibility(group: NavigatorGroup) {
@@ -3256,15 +3287,26 @@ function DbmlErdViewerContent({
                         {visibleInGroup}/{group.tables.length}
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      className="dbml-visibility-button"
-                      onClick={() => toggleGroupVisibility(group)}
-                      title={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
-                      aria-label={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
-                    >
-                      <EyeIcon closed={groupHidden} />
-                    </button>
+                    <div className="dbml-schema-group__actions">
+                      <button
+                        type="button"
+                        className="dbml-visibility-button"
+                        onClick={(event) => void copyNavigatorText(group.name, event)}
+                        title="Grup adını kopyala"
+                        aria-label={`${group.name} adını kopyala`}
+                      >
+                        <CopyIcon />
+                      </button>
+                      <button
+                        type="button"
+                        className="dbml-visibility-button"
+                        onClick={() => toggleGroupVisibility(group)}
+                        title={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
+                        aria-label={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
+                      >
+                        <EyeIcon closed={groupHidden} />
+                      </button>
+                    </div>
                   </div>
 
                   {!collapsed && (
@@ -3285,15 +3327,26 @@ function DbmlErdViewerContent({
                                 </span>
                                 <span className="dbml-schema-group__table-name">{table.name}</span>
                               </button>
-                              <button
-                                type="button"
-                                className="dbml-visibility-button"
-                                onClick={() => toggleTableVisibility(table.id)}
-                                title={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
-                                aria-label={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
-                              >
-                                <EyeIcon closed={isHidden} />
-                              </button>
+                              <div className="dbml-schema-group__actions">
+                                <button
+                                  type="button"
+                                  className="dbml-visibility-button"
+                                  onClick={(event) => void copyNavigatorText(table.fullName, event)}
+                                  title="Tablo adını kopyala"
+                                  aria-label={`${table.fullName} adını kopyala`}
+                                >
+                                  <CopyIcon />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="dbml-visibility-button"
+                                  onClick={() => toggleTableVisibility(table.id)}
+                                  title={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
+                                  aria-label={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
+                                >
+                                  <EyeIcon closed={isHidden} />
+                                </button>
+                              </div>
                             </div>
                             {columns.length > 0 && (
                               <ul className="dbml-schema-group__columns">
