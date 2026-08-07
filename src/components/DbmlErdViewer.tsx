@@ -1704,6 +1704,7 @@ function DbmlErdViewerContent({
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
   const hoverClearTimerRef = useRef<number | null>(null);
+  const skipFitViewRef = useRef(false);
   const viewerRef = useRef<HTMLElement | null>(null);
   const { fitView, fitBounds, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
 
@@ -1856,9 +1857,14 @@ function DbmlErdViewerContent({
         setNodes(graph.nodes);
         setEdges(graph.edges);
 
-        window.requestAnimationFrame(() => {
-          fitView({ padding: 0.12, duration: 500, maxZoom: 1 });
-        });
+        const shouldFitView = !skipFitViewRef.current;
+        skipFitViewRef.current = false;
+
+        if (shouldFitView) {
+          window.requestAnimationFrame(() => {
+            fitView({ padding: 0.12, duration: 500, maxZoom: 1 });
+          });
+        }
       } catch (caughtError) {
         if (cancelled) return;
         setError(caughtError instanceof Error ? caughtError.message : 'DBML render edilirken hata oluştu.');
@@ -2786,7 +2792,11 @@ function DbmlErdViewerContent({
                     type="button"
                     className={`dbml-density__button${layoutDensity === option ? ' is-active' : ''}`}
                     aria-pressed={layoutDensity === option}
-                    onClick={() => setLayoutDensity(option)}
+                    onClick={() => {
+                      if (option === layoutDensity) return;
+                      skipFitViewRef.current = true;
+                      setLayoutDensity(option);
+                    }}
                     title={LAYOUT_DENSITY_PRESETS[option].title}
                   >
                     {LAYOUT_DENSITY_PRESETS[option].label}
