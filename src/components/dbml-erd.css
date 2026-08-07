@@ -1167,6 +1167,11 @@
   background: var(--dbml-surface);
   box-shadow: var(--dbml-shadow);
   transition: opacity 180ms ease;
+  cursor: grab;
+}
+
+.dbml-table-node:active {
+  cursor: grabbing;
 }
 
 .dbml-table-node.is-dimmed {

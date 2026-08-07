@@ -2736,7 +2736,7 @@ function DbmlErdViewerContent({
             marqueeStartRef.current = { x: event.clientX, y: event.clientY };
             setMarquee({ left: event.clientX, top: event.clientY, width: 0, height: 0 });
           }}
-          nodesDraggable={false}
+          nodesDraggable
           nodesConnectable={false}
           edgesReconnectable={false}
           zoomOnDoubleClick={false}
@@ -2903,7 +2903,9 @@ function DbmlErdViewerContent({
             <span><b>1</b> Tek</span>
             <span><b>N</b> Çok</span>
             <span className="dbml-legend__hint">
-              {viewLocked ? 'Kilitli: sürükleyerek kaydır' : 'Açık: sürükleyerek alan zoom'}
+              {viewLocked
+                ? 'Kilitli: sürükleyerek kaydır'
+                : 'Tabloyu sürükleyerek taşı · boş alanda zoom'}
             </span>
           </Panel>
 
