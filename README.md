@@ -1,45 +1,92 @@
-#  DBML ERD Viewer
+# DBML ERD Viewer
 
 DBML metnini React Flow üzerinde otomatik ELK yerleşimiyle salt-okunur ER diyagramı olarak gösterir.
+
+Kimlik doğrulama Google Sheet üzerinden yapılır; yetkili Drive klasörlerindeki `.dbml` / `.txt` dosyaları sunucu (service account) ile okunur.
 
 ## Çalıştırma
 
 ```bash
+cp .env.example .env
+# .env ve secrets/service-account.json doldur
 npm install
 npm run dev
 ```
 
-`src/` altındaki `.dbml` dosyaları sol menüde listelenir. Yeni dosya ekleyebilir veya soldan yükleyebilirsiniz.
+`npm run dev` hem API (`:3001`) hem Vite (`:5173`) başlatır. Vite `/api` isteklerini API’ye proxy’ler.
 
-Sağ menüden şema/tablo/kolon arayabilir, şema başına tablo sayılarını görebilirsiniz.
-Çizgi veya tablo üzerine gelince bağlantılar vurgulanır; tablo notları başlıktaki ikonla okunur.
+## Google Sheet = DB
 
-## Google Drive
+Spreadsheet’te şu sayfalar olmalı (başlık satırı zorunlu):
 
-Kısıtlı Drive dosyalarını Google hesabınla açmak için:
+### Kullanicilar
 
-1. [Google Cloud Console](https://console.cloud.google.com/) üzerinde proje oluştur
-2. **Google Drive API** ve **Google Picker API** etkinleştir
-3. **OAuth 2.0 Client ID** (Web application) oluştur  
-   - Authorized JavaScript origins: `http://localhost:5173` (ve prod URL’in)
-4. **API Key** oluştur
-5. Proje ayarlarından **Project number** değerini kopyala (App ID)
-6. `.env.example` dosyasını `.env` olarak kopyala ve doldur:
+| username | password_hash | is_super_admin | aktif |
+|----------|---------------|----------------|-------|
+| admin | `$2a$12$...` | TRUE | TRUE |
+| ayse | `$2a$12$...` | FALSE | TRUE |
+
+Şifre hash üretmek:
 
 ```bash
-cp .env.example .env
+npm run hash-password -- "sifreniz"
 ```
+
+Çıktıyı `password_hash` sütununa yapıştırın. Düz metin şifre saklamayın.
+
+### Ekipler
+
+| team_id | team_name |
+|---------|-----------|
+| crm | CRM |
+
+### EkipUyeleri
+
+| team_id | username |
+|---------|----------|
+| crm | ayse |
+
+### Klasorler
+
+| folder_id | label | drive_folder_id |
+|-----------|-------|-----------------|
+| sales | Satış | 1abcDriveFolderId |
+
+`drive_folder_id`: Drive klasörünün URL’sindeki ID.
+
+### Yetkiler
+
+| folder_id | grantee_type | grantee_id |
+|-----------|--------------|------------|
+| sales | user | ayse |
+| sales | team | crm |
+
+- `grantee_type`: `user` veya `team` (Türkçe: `kullanici` / `ekip` de kabul)
+- Super admin (`is_super_admin=TRUE`) tüm klasörleri görür
+
+## Google Cloud / Service Account
+
+1. Google Cloud’da proje oluştur
+2. **Google Sheets API** ve **Google Drive API** etkinleştir
+3. Service account oluştur → JSON anahtar indir → `secrets/service-account.json`
+4. Sheet’i service account e-postasıyla **Düzenleyici** paylaş (yönetim ekranı yazdığı için Viewer yetmez)
+5. Drive klasörlerini aynı e-postayla **Görüntüleyici** paylaş
+6. `.env` içinde `GOOGLE_SHEET_ID` ve `SESSION_SECRET` doldur
 
 ```env
-VITE_GOOGLE_CLIENT_ID=....apps.googleusercontent.com
-VITE_GOOGLE_API_KEY=...
-VITE_GOOGLE_APP_ID=1234567890
+PORT=3001
+SESSION_SECRET=...
+GOOGLE_SHEET_ID=...
+GOOGLE_SERVICE_ACCOUNT_FILE=./secrets/service-account.json
 ```
 
-7. `npm run dev` yeniden başlat  
-8. Sol menüden **Google Drive** → Google ile giriş → dosya seç
+**Önemli:** Service account anahtarı yalnızca sunucu `.env` / `secrets/` içinde tutulur. `VITE_*` ile tarayıcıya konmaz.
 
-Drive’da dosyayı **Kısıtlı** paylaşımda tutup yalnızca istediğin Google hesaplarına görüntüleyici verebilirsin; uygulama, giriş yapan kullanıcının erişebildiği dosyaları açar.
+## Oturum
+
+- Login zorunlu; giriş yoksa login ekranı
+- JWT oturum token’ı IndexedDB’de saklanır
+- Çıkış sol panelden yapılır
 
 ## Desteklenen DBML yapıları
 

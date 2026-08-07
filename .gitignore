@@ -32,6 +32,12 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Secrets
+secrets/*
+!secrets/.gitkeep
+*.pem
+service-account*.json
+
 # Test / coverage
 coverage/
 *.lcov

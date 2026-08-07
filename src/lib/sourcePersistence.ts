@@ -3,12 +3,12 @@ export interface PersistedSource {
   name: string;
   label: string;
   content: string;
-  kind: 'upload' | 'link' | 'drive';
+  kind: 'upload' | 'link';
   url?: string;
 }
 
 const DB_NAME = 'cetas-crm-erd';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = 'session';
 
 const UPLOADED_KEY = 'uploadedSources';
@@ -35,7 +35,7 @@ function isPersistedUserSource(value: unknown): value is PersistedSource {
     typeof item.name === 'string' &&
     typeof item.label === 'string' &&
     typeof item.content === 'string' &&
-    (kind === 'upload' || kind === 'link' || kind === 'drive') &&
+    (kind === 'upload' || kind === 'link') &&
     (item.url === undefined || typeof item.url === 'string')
   );
 }

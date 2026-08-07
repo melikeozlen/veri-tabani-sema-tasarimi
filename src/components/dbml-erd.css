@@ -38,8 +38,44 @@
   color-scheme: dark;
 }
 
+/* Slate Koyu — varsayılan koyu palet (ERD base ile aynı) */
+.dbml-erd-viewer[data-theme="dark"],
+.admin-page[data-theme="dark"],
+.login-page[data-theme="dark"] {
+  --dbml-bg: #0f1419;
+  --dbml-panel: #161b22;
+  --dbml-surface: #1c222b;
+  --dbml-surface-2: #222933;
+  --dbml-border: #2a3340;
+  --dbml-text: #e6edf3;
+  --dbml-text-strong: #f0f3f6;
+  --dbml-muted: #8b949e;
+  --dbml-accent: #3d8fd1;
+  --dbml-accent-soft: rgba(61, 143, 209, 0.14);
+  --dbml-accent-border: rgba(61, 143, 209, 0.45);
+  --dbml-yellow: #b8922e;
+  --dbml-yellow-soft: rgba(184, 146, 46, 0.14);
+  --dbml-green: #3d9b6e;
+  --dbml-green-soft: rgba(61, 155, 110, 0.14);
+  --dbml-hover: rgba(139, 148, 158, 0.08);
+  --dbml-edge: #5a6a7d;
+  --dbml-edge-active: #3d8fd1;
+  --dbml-dot: #3a4554;
+  --dbml-shadow: none;
+  --dbml-handle-border: #0f1419;
+  --dbml-dim: 0.2;
+  --dbml-warn-text: #d4b56a;
+  --dbml-warn-bg: rgba(184, 146, 46, 0.12);
+  --dbml-error-text: #f0b4bc;
+  --dbml-error-bg: #3d1f26;
+  --dbml-error-border: #7a3a48;
+  color-scheme: dark;
+}
+
 /* Açık — slate mavi */
-.dbml-erd-viewer[data-theme="light"] {
+.dbml-erd-viewer[data-theme="light"],
+.admin-page[data-theme="light"],
+.login-page[data-theme="light"] {
   --dbml-bg: #fbfcfd;
   --dbml-panel: #ffffff;
   --dbml-surface: #ffffff;
@@ -71,7 +107,9 @@
 }
 
 /* Gece — indigo + mint (koyu) */
-.dbml-erd-viewer[data-theme="night"] {
+.dbml-erd-viewer[data-theme="night"],
+.admin-page[data-theme="night"],
+.login-page[data-theme="night"] {
   --dbml-bg: #0b1020;
   --dbml-panel: #12182b;
   --dbml-surface: #171e33;
@@ -103,7 +141,9 @@
 }
 
 /* Deniz — teal açık */
-.dbml-erd-viewer[data-theme="sea"] {
+.dbml-erd-viewer[data-theme="sea"],
+.admin-page[data-theme="sea"],
+.login-page[data-theme="sea"] {
   --dbml-bg: #f3f8f7;
   --dbml-panel: #ffffff;
   --dbml-surface: #ffffff;
@@ -135,7 +175,9 @@
 }
 
 /* Kurumsal Açık — nötr gri, az renk */
-.dbml-erd-viewer[data-theme="corp-light"] {
+.dbml-erd-viewer[data-theme="corp-light"],
+.admin-page[data-theme="corp-light"],
+.login-page[data-theme="corp-light"] {
   --dbml-bg: #f7f7f5;
   --dbml-panel: #ffffff;
   --dbml-surface: #ffffff;
@@ -167,7 +209,9 @@
 }
 
 /* Kurumsal Koyu — charcoal, az renk */
-.dbml-erd-viewer[data-theme="corp-dark"] {
+.dbml-erd-viewer[data-theme="corp-dark"],
+.admin-page[data-theme="corp-dark"],
+.login-page[data-theme="corp-dark"] {
   --dbml-bg: #1c1c1b;
   --dbml-panel: #242422;
   --dbml-surface: #2a2a28;
@@ -199,7 +243,9 @@
 }
 
 /* Studio — dengeli koyu menü + yumuşak açık canvas */
-.dbml-erd-viewer[data-theme="split"] {
+.dbml-erd-viewer[data-theme="split"],
+.admin-page[data-theme="split"],
+.login-page[data-theme="split"] {
   --dbml-bg: #d9dee6;
   --dbml-panel: #eceff3;
   --dbml-surface: #f4f6f8;
@@ -272,6 +318,90 @@
   min-width: 0;
   min-height: 0;
   height: 100%;
+}
+
+.dbml-canvas-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--dbml-bg) 78%, transparent);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+
+.dbml-canvas-loader__card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-width: min(320px, calc(100% - 32px));
+  padding: 22px 24px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 12px;
+  background: var(--dbml-panel);
+  box-shadow: var(--dbml-shadow, 0 12px 40px rgba(0, 0, 0, 0.18));
+  color: var(--dbml-text);
+  text-align: center;
+}
+
+.dbml-canvas-loader__card strong {
+  color: var(--dbml-text-strong);
+  font-size: 14px;
+}
+
+.dbml-canvas-loader__card span {
+  color: var(--dbml-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.dbml-sources-loader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--dbml-accent-border, var(--dbml-border));
+  border-radius: 10px;
+  background: var(--dbml-accent-soft);
+}
+
+.dbml-sources-loader__spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, var(--dbml-accent) 28%, transparent);
+  border-top-color: var(--dbml-accent);
+  border-radius: 50%;
+  animation: dbml-spin 0.75s linear infinite;
+}
+
+.dbml-sources-loader__spinner--lg {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
+.dbml-sources-loader__text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dbml-sources-loader__text strong {
+  color: var(--dbml-text-strong);
+  font-size: 12px;
+}
+
+.dbml-sources-loader__text span {
+  color: var(--dbml-muted);
+  font-size: 11px;
+}
+
+@keyframes dbml-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .dbml-canvas .react-flow {
@@ -454,9 +584,31 @@ body.dbml-resizing-side * {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 12px;
-  padding: 16px 14px 12px;
+  gap: 8px;
+  padding: 10px 10px 8px;
   border-bottom: 1px solid var(--dbml-border);
+}
+
+.dbml-side__header-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 4px;
+}
+
+.dbml-side__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.dbml-side__title-row h2 {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dbml-side__eyebrow {
@@ -473,18 +625,102 @@ body.dbml-resizing-side * {
   color: var(--dbml-text-strong);
   font-size: 14px;
   font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.dbml-side__account {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.dbml-side__account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dbml-muted);
+  font-size: 10px;
+}
+
+.dbml-side__badge {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dbml-accent) 14%, transparent);
+  color: var(--dbml-accent);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1.5;
 }
 
 .dbml-side__body {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   min-height: 0;
-  padding: 12px;
+  padding: 10px;
   overflow: auto;
   scrollbar-gutter: stable;
+}
+
+.dbml-side__dock {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--dbml-border);
+  background: var(--dbml-panel);
+}
+
+.dbml-side__dock:has(> :only-child) {
+  grid-template-columns: 1fr;
+}
+
+.dbml-side__dock-btn {
+  height: 34px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 8px;
+  background: var(--dbml-surface-2);
+  color: var(--dbml-text-strong);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.dbml-side__dock-btn:hover {
+  border-color: var(--dbml-accent);
+  background: var(--dbml-hover);
+}
+
+.dbml-side__dock-btn--admin {
+  color: var(--dbml-accent);
+  border-color: var(--dbml-accent-border, color-mix(in srgb, var(--dbml-accent) 40%, var(--dbml-border)));
+  background: var(--dbml-accent-soft);
+}
+
+.dbml-side__dock-btn--admin:hover {
+  background: color-mix(in srgb, var(--dbml-accent) 22%, var(--dbml-surface-2));
+}
+
+.dbml-side__dock-btn--logout {
+  color: #b45309;
+  border-color: color-mix(in srgb, #c45c26 35%, var(--dbml-border));
+  background: color-mix(in srgb, #c45c26 10%, var(--dbml-surface-2));
+}
+
+.dbml-side__dock-btn--logout:hover {
+  background: color-mix(in srgb, #c45c26 18%, var(--dbml-surface-2));
 }
 
 .dbml-side__body.is-editor {
@@ -505,20 +741,24 @@ body.dbml-resizing-side * {
 
 .dbml-source-editor__toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .dbml-source-editor__hint {
   color: var(--dbml-muted);
   font-size: 11px;
+  flex: 1 1 140px;
 }
 
 .dbml-source-editor__actions {
   display: flex;
   gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .dbml-source-editor__button {
@@ -542,6 +782,22 @@ body.dbml-resizing-side * {
   color: var(--dbml-accent);
   border-color: var(--dbml-accent-border);
   background: var(--dbml-accent-soft);
+}
+
+.dbml-source-editor__button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.dbml-source-editor__notice {
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--dbml-border);
+  background: var(--dbml-surface-2);
+  color: var(--dbml-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .dbml-source-editor__textarea {
@@ -753,6 +1009,12 @@ body.dbml-resizing-side * {
 .dbml-link-form button:disabled {
   opacity: 0.6;
   cursor: wait;
+}
+
+.dbml-link-form__hint {
+  grid-column: 1 / -1;
+  color: var(--dbml-muted);
+  font-size: 11px;
 }
 
 .dbml-link-form__error {
@@ -1950,6 +2212,48 @@ body.dbml-resizing-side * {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.dbml-theme-select--compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 7px;
+  background: var(--dbml-surface-2);
+}
+
+.dbml-theme-select--compact:focus-within {
+  border-color: var(--dbml-accent);
+}
+
+.dbml-theme-select--compact .dbml-theme-select__swatch {
+  flex-shrink: 0;
+}
+
+.dbml-theme-select--compact select {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--dbml-text);
+  background-color: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--dbml-muted) 50%),
+    linear-gradient(135deg, var(--dbml-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 10px) 55%,
+    calc(100% - 5px) 55%;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 18px;
 }
 
 .dbml-theme-select__label {

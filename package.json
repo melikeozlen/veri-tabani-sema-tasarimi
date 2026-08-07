@@ -4,21 +4,35 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n api,web -c green,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start:api": "tsx server/index.ts",
+    "hash-password": "tsx server/hash-password.ts"
   },
   "dependencies": {
+    "@hono/node-server": "^1.19.1",
     "@vitejs/plugin-react": "latest",
     "@xyflow/react": "latest",
+    "bcryptjs": "^3.0.2",
+    "dotenv": "^17.2.1",
     "elkjs": "latest",
-    "vite": "latest",
+    "googleapis": "^159.0.0",
+    "hono": "^4.9.6",
+    "jose": "^6.0.12",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/react": "latest",
     "@types/react-dom": "latest",
-    "typescript": "latest"
+    "concurrently": "^9.2.1",
+    "tsx": "^4.20.5",
+    "typescript": "latest",
+    "@types/node": "^24.3.0"
   }
 }

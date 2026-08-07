@@ -26,8 +26,18 @@ import {
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
-import { isGoogleDriveConfigured, pickAndLoadGoogleDriveFile } from '../lib/googleDrive';
 import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersistence';
+import { updateSourceContent } from '../lib/auth';
+import { LanguageSwitcher } from './LanguageSwitcher';
+import { useI18n, type MessageKey } from '../lib/i18n';
+import {
+  applyThemeToDocument,
+  isThemeId,
+  THEME_META,
+  THEME_OPTIONS,
+  THEME_STORAGE_KEY,
+  type ThemeId,
+} from '../lib/theme';
 
 // -----------------------------------------------------------------------------
 // DBML model types
@@ -56,12 +66,15 @@ const ALL_SEARCH_SCOPES: SearchScope[] = ['schema', 'group', 'table', 'column'];
 
 type SearchScopeFilter = SearchScope | 'all';
 
-const SEARCH_SCOPE_OPTIONS: Array<{ id: SearchScopeFilter; label: string }> = [
-  { id: 'all', label: 'Tümü' },
-  { id: 'schema', label: 'Şema adı' },
-  { id: 'group', label: 'Grup adı' },
-  { id: 'table', label: 'Tablo adı' },
-  { id: 'column', label: 'Kolon adı' },
+const SEARCH_SCOPE_OPTIONS: Array<{
+  id: SearchScopeFilter;
+  labelKey: MessageKey;
+}> = [
+  { id: 'all', labelKey: 'search.scope.all' },
+  { id: 'schema', labelKey: 'search.scope.schemaName' },
+  { id: 'group', labelKey: 'search.scope.groupName' },
+  { id: 'table', labelKey: 'search.scope.tableName' },
+  { id: 'column', labelKey: 'search.scope.columnName' },
 ];
 
 function scopesFromFilter(filter: SearchScopeFilter): SearchScope[] {
@@ -176,6 +189,14 @@ export interface DbmlErdViewerProps {
   title?: string;
   height?: string | number;
   className?: string;
+  userLabel?: string;
+  isSuperAdmin?: boolean;
+  authToken?: string;
+  sourcesLoading?: boolean;
+  sourcesError?: string | null;
+  onLogout?: () => void;
+  onOpenAdmin?: () => void;
+  onDriveSourceUpdated?: (sourceId: string, content: string) => void;
 }
 
 interface NavigatorGroup {
@@ -896,8 +917,9 @@ function buildSampleRows(table: DbmlTable, rowCount = 4): Array<Record<string, s
 }
 
 const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
+  const { t, locale } = useI18n();
   const { table, foreignKeyFields, dimmed, searchTerm, searchScopes, headerColor, onOpenTableData } = data;
-  const normalizedSearch = searchTerm.trim().toLocaleLowerCase('tr-TR');
+  const normalizedSearch = searchTerm.trim().toLocaleLowerCase(locale === 'en' ? 'en-US' : 'tr-TR');
   const highlightColumns = normalizedSearch.length > 0 && searchScopes.includes('column');
   const [copiedName, setCopiedName] = useState(false);
   const copyResetRef = useRef<number | null>(null);
@@ -927,15 +949,15 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
             <button
               type="button"
               className={`dbml-table-node__title nodrag nopan${copiedName ? ' is-copied' : ''}`}
-              title={`${table.fullName} — tıkla, kopyala`}
-              aria-label={`${table.fullName} adını kopyala`}
+              title={t('copy.tableClick', { name: table.fullName })}
+              aria-label={t('copy.nameAria', { name: table.fullName })}
               onClick={copyTableName}
               onMouseDown={(event) => event.stopPropagation()}
             >
               {table.name}
             </button>
             {table.note && (
-              <span className="dbml-note-icon" tabIndex={0} aria-label="Tablo notu">
+              <span className="dbml-note-icon" tabIndex={0} aria-label={t('table.note')}>
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                   <path
                     fill="currentColor"
@@ -950,8 +972,8 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
             <button
               type="button"
               className="dbml-table-data-icon nodrag nopan"
-              aria-label="Tablo verisini görüntüle"
-              title="Tablo verisini görüntüle"
+              aria-label={t('table.viewData')}
+              title={t('table.viewData')}
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenTableData?.(table.id);
@@ -1128,6 +1150,7 @@ const RelationEdge = memo(function RelationEdge({
   data,
   selected,
 }: EdgeProps<RelationFlowEdge>) {
+  const { t } = useI18n();
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -1243,24 +1266,24 @@ const RelationEdge = memo(function RelationEdge({
             onPointerDown={keepPopupOpen}
           >
             <div className="dbml-relation-label__row">
-              <span className="dbml-relation-label__role">Başlangıç</span>
+              <span className="dbml-relation-label__role">{t('relation.start')}</span>
               <button
                 type="button"
                 className="dbml-relation-label__table"
                 onClick={(event) => focusTable(data.sourceTable, event)}
-                title={`${data.sourceTable} tablosuna git`}
+                title={t('relation.goTable', { name: data.sourceTable })}
               >
                 {data.sourceTable}
               </button>
               <span className="dbml-relation-label__field">.{data.sourceField}</span>
             </div>
             <div className="dbml-relation-label__row">
-              <span className="dbml-relation-label__role">Bitiş</span>
+              <span className="dbml-relation-label__role">{t('relation.end')}</span>
               <button
                 type="button"
                 className="dbml-relation-label__table"
                 onClick={(event) => focusTable(data.targetTable, event)}
-                title={`${data.targetTable} tablosuna git`}
+                title={t('relation.goTable', { name: data.targetTable })}
               >
                 {data.targetTable}
               </button>
@@ -1275,43 +1298,6 @@ const RelationEdge = memo(function RelationEdge({
 
 const nodeTypes = { dbmlTable: TableNode };
 const edgeTypes = { dbmlRelation: RelationEdge };
-
-type ThemeId = 'corp-light' | 'corp-dark' | 'dark' | 'light' | 'night' | 'sea' | 'split';
-
-const THEME_OPTIONS: Array<{
-  id: ThemeId;
-  label: string;
-  scheme: 'dark' | 'light';
-  corporate?: boolean;
-  swatchBg: string;
-  swatchAccent: string;
-  dot: string;
-}> = [
-  { id: 'corp-light', label: 'Nötr Açık', scheme: 'light', corporate: true, swatchBg: '#f7f7f5', swatchAccent: '#3f3f3c', dot: '#b8b8b2' },
-  { id: 'corp-dark', label: 'Nötr Koyu', scheme: 'dark', corporate: true, swatchBg: '#1c1c1b', swatchAccent: '#c8c8c2', dot: '#4a4a46' },
-  { id: 'light', label: 'Slate Açık', scheme: 'light', swatchBg: '#fbfcfd', swatchAccent: '#315d86', dot: '#9aa8b8' },
-  { id: 'dark', label: 'Slate Koyu', scheme: 'dark', swatchBg: '#0f1419', swatchAccent: '#3d8fd1', dot: '#3a4554' },
-  { id: 'sea', label: 'Teal Açık', scheme: 'light', swatchBg: '#f3f8f7', swatchAccent: '#0f766e', dot: '#8fafa9' },
-  { id: 'night', label: 'Indigo Gece', scheme: 'dark', swatchBg: '#0b1020', swatchAccent: '#5eead4', dot: '#3a4568' },
-  { id: 'split', label: 'Studio', scheme: 'light', swatchBg: '#d9dee6', swatchAccent: '#434b5a', dot: '#a8b3c2' },
-];
-
-const THEME_META = Object.fromEntries(THEME_OPTIONS.map((item) => [item.id, item])) as Record<
-  ThemeId,
-  (typeof THEME_OPTIONS)[number]
->;
-
-function isThemeId(value: string | null): value is ThemeId {
-  return (
-    value === 'corp-light' ||
-    value === 'corp-dark' ||
-    value === 'dark' ||
-    value === 'light' ||
-    value === 'night' ||
-    value === 'sea' ||
-    value === 'split'
-  );
-}
 
 function isLightScheme(theme: ThemeId): boolean {
   return THEME_META[theme].scheme === 'light';
@@ -1330,8 +1316,8 @@ type LayoutDensity = 'normal' | 'horizontal' | 'vertical';
 const LAYOUT_DENSITY_PRESETS: Record<
   LayoutDensity,
   {
-    label: string;
-    title: string;
+    labelKey: MessageKey;
+    titleKey: MessageKey;
     betweenLayers: number;
     nodeNode: number;
     edgeNode: number;
@@ -1339,24 +1325,24 @@ const LAYOUT_DENSITY_PRESETS: Record<
   }
 > = {
   normal: {
-    label: 'Normal',
-    title: 'Normal dizilim',
+    labelKey: 'layout.normal',
+    titleKey: 'layout.normalTitle',
     betweenLayers: 180,
     nodeNode: 90,
     edgeNode: 32,
     padding: 70,
   },
   horizontal: {
-    label: 'Yatay',
-    title: 'Yatay açık',
+    labelKey: 'layout.horizontal',
+    titleKey: 'layout.horizontalTitle',
     betweenLayers: 660,
     nodeNode: 90,
     edgeNode: 56,
     padding: 130,
   },
   vertical: {
-    label: 'Dikey',
-    title: 'Dikey açık',
+    labelKey: 'layout.vertical',
+    titleKey: 'layout.verticalTitle',
     betweenLayers: 180,
     nodeNode: 200,
     edgeNode: 48,
@@ -1769,10 +1755,20 @@ function sourceDisplayName(fileName: string): string {
 function DbmlErdViewerContent({
   sources,
   initialSourceId,
-  title = 'DBML Veri Modeli',
+  title,
   height = '100%',
   className = '',
+  userLabel,
+  isSuperAdmin = false,
+  authToken,
+  sourcesLoading = false,
+  sourcesError = null,
+  onLogout,
+  onOpenAdmin,
+  onDriveSourceUpdated,
 }: DbmlErdViewerProps) {
+  const { t, locale } = useI18n();
+  const resolvedTitle = title ?? t('app.defaultTitle');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sessionReady, setSessionReady] = useState(false);
   const [uploadedSources, setUploadedSources] = useState<DbmlSource[]>([]);
@@ -1780,6 +1776,8 @@ function DbmlErdViewerContent({
   const [isEditingSource, setIsEditingSource] = useState(false);
   const [draftContent, setDraftContent] = useState('');
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [editorNotice, setEditorNotice] = useState<string | null>(null);
 
   const allSources = useMemo(() => {
     const merged = [...sources];
@@ -1814,7 +1812,6 @@ function DbmlErdViewerContent({
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [pinnedEdgeId, setPinnedEdgeId] = useState<string | null>(null);
   const [pinnedEdgePointer, setPinnedEdgePointer] = useState<XYPosition | null>(null);
-  const [layoutVersion, setLayoutVersion] = useState(0);
   const [layoutDensity, setLayoutDensity] = useState<LayoutDensity>(() => {
     if (typeof window === 'undefined') return 'normal';
     const saved = window.localStorage.getItem('dbml-erd-layout-density');
@@ -1841,7 +1838,7 @@ function DbmlErdViewerContent({
   const [dataModalTableId, setDataModalTableId] = useState<string | null>(null);
   const [theme, setTheme] = useState<ThemeId>(() => {
     if (typeof window === 'undefined') return 'corp-light';
-    const saved = window.localStorage.getItem('dbml-erd-theme');
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (isThemeId(saved)) return saved;
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'corp-dark' : 'corp-light';
   });
@@ -1851,7 +1848,6 @@ function DbmlErdViewerContent({
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
-  const [driveLoading, setDriveLoading] = useState(false);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
   const hoverClearTimerRef = useRef<number | null>(null);
@@ -1927,10 +1923,8 @@ function DbmlErdViewerContent({
   }, [layoutDensity]);
 
   useEffect(() => {
-    window.localStorage.setItem('dbml-erd-theme', theme);
-    document.documentElement.dataset.theme = theme;
-    document.documentElement.dataset.scheme = THEME_META[theme].scheme;
-    document.body.style.background = THEME_META[theme].swatchBg;
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    applyThemeToDocument(theme);
   }, [theme]);
 
   useEffect(() => {
@@ -1972,12 +1966,15 @@ function DbmlErdViewerContent({
     void loadPersistedSession()
       .then((session) => {
         if (cancelled) return;
-        setUploadedSources(session.uploadedSources);
+        const localUploads = session.uploadedSources.filter(
+          (item) => item.kind === 'upload' || item.kind === 'link',
+        );
+        setUploadedSources(localUploads);
         setSourceOverrides(session.sourceOverrides);
         if (session.activeSourceId) {
           setActiveSourceId(session.activeSourceId);
-        } else if (!initialSourceId && session.uploadedSources[0]) {
-          setActiveSourceId(session.uploadedSources[0].id);
+        } else if (!initialSourceId && localUploads[0]) {
+          setActiveSourceId(localUploads[0].id);
         }
         setSessionReady(true);
       })
@@ -1994,8 +1991,8 @@ function DbmlErdViewerContent({
     if (!sessionReady) return;
 
     const persistable = uploadedSources.filter(
-      (item): item is DbmlSource & { kind: 'upload' | 'link' | 'drive' } =>
-        item.kind === 'upload' || item.kind === 'link' || item.kind === 'drive',
+      (item): item is DbmlSource & { kind: 'upload' | 'link' } =>
+        item.kind === 'upload' || item.kind === 'link',
     );
 
     void savePersistedSession({
@@ -2003,9 +2000,9 @@ function DbmlErdViewerContent({
       sourceOverrides,
       activeSourceId,
     }).catch(() => {
-      setLinkError('Yüklenen dosyalar tarayıcıya kaydedilemedi.');
+      setLinkError(t('sources.persistFailed'));
     });
-  }, [activeSourceId, sessionReady, sourceOverrides, uploadedSources]);
+  }, [activeSourceId, sessionReady, sourceOverrides, uploadedSources, t]);
 
   useEffect(() => {
     if (!sessionReady) return;
@@ -2075,10 +2072,10 @@ function DbmlErdViewerContent({
     async function renderDbml() {
       try {
         setError(null);
-        if (!dbml.trim()) throw new Error('Gösterilecek bir .dbml kaynağı bulunamadı.');
+        if (!dbml.trim()) throw new Error(t('error.noSource'));
 
         const parsed = parseDbml(dbml);
-        if (parsed.tables.length === 0) throw new Error('DBML içinde render edilebilir bir Table bloğu bulunamadı.');
+        if (parsed.tables.length === 0) throw new Error(t('error.noTable'));
 
         const graph = await buildFlowGraph(parsed, layoutDensity);
         if (cancelled) return;
@@ -2099,7 +2096,7 @@ function DbmlErdViewerContent({
         }
       } catch (caughtError) {
         if (cancelled) return;
-        setError(caughtError instanceof Error ? caughtError.message : 'DBML render edilirken hata oluştu.');
+        setError(caughtError instanceof Error ? caughtError.message : t('error.render'));
         setEnumCount(0);
         setTableGroups([]);
         setNodes([]);
@@ -2111,7 +2108,7 @@ function DbmlErdViewerContent({
     return () => {
       cancelled = true;
     };
-  }, [dbml, fitView, layoutDensity, layoutVersion, setEdges, setNodes]);
+  }, [dbml, fitView, layoutDensity, setEdges, setNodes, t]);
 
   useEffect(() => {
     setSelectedTable(null);
@@ -2430,7 +2427,7 @@ function DbmlErdViewerContent({
 
     const lowerName = file.name.toLowerCase();
     if (!lowerName.endsWith('.dbml') && !lowerName.endsWith('.txt')) {
-      setLinkError('Yalnızca .dbml veya .txt dosyaları yüklenebilir.');
+      setLinkError(t('sources.uploadOnly'));
       event.target.value = '';
       return;
     }
@@ -2456,7 +2453,7 @@ function DbmlErdViewerContent({
 
   function handleExport() {
     if (!activeSource?.content.trim()) {
-      setLinkError('Dışa aktarılacak bir kaynak yok.');
+      setLinkError(t('sources.noExport'));
       return;
     }
 
@@ -2470,44 +2467,6 @@ function DbmlErdViewerContent({
     anchor.click();
     URL.revokeObjectURL(url);
     setLinkError(null);
-  }
-
-  async function handleOpenGoogleDrive() {
-    if (!isGoogleDriveConfigured()) {
-      setLinkError(
-        'Google Drive ayarlı değil. Proje köküne .env ekleyip VITE_GOOGLE_CLIENT_ID, VITE_GOOGLE_API_KEY ve VITE_GOOGLE_APP_ID doldurun (bkz. .env.example).',
-      );
-      return;
-    }
-
-    setDriveLoading(true);
-    setLinkError(null);
-
-    try {
-      const file = await pickAndLoadGoogleDriveFile();
-      if (!file) return;
-
-      const id = `drive:${file.id}`;
-      const source: DbmlSource = {
-        id,
-        name: file.name,
-        label: sourceDisplayName(file.name),
-        content: file.content,
-        kind: 'drive',
-        url: file.url,
-      };
-
-      setUploadedSources((current) => [source, ...current.filter((item) => item.id !== id)]);
-      setActiveSourceId(id);
-    } catch (caughtError) {
-      setLinkError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : 'Google Drive dosyası açılamadı.',
-      );
-    } finally {
-      setDriveLoading(false);
-    }
   }
 
   function handleRemoveSource(sourceId: string) {
@@ -2548,14 +2507,18 @@ function DbmlErdViewerContent({
     setIsEditingSource(true);
     setLeftOpen(true);
     setLinkError(null);
+    setEditorNotice(null);
   }
 
   function cancelSourceEditor() {
     setIsEditingSource(false);
     setEditingSourceId(null);
     setDraftContent('');
+    setEditorNotice(null);
+    setSaveLoading(false);
   }
 
+  /** Yerel önizleme: diyagramı günceller, editör açık kalır. */
   function applySourceEditor() {
     if (!editingSourceId) return;
 
@@ -2580,19 +2543,57 @@ function DbmlErdViewerContent({
     }
 
     setActiveSourceId(editingSourceId);
-    setIsEditingSource(false);
-    setEditingSourceId(null);
     setLinkError(null);
+    setEditorNotice(t('editor.applied'));
+  }
+
+  async function saveSourceEditor() {
+    if (!editingSourceId || !authToken || !isSuperAdmin) return;
+    const source = allSources.find((item) => item.id === editingSourceId);
+    if (!source || source.kind !== 'drive') return;
+
+    const fileId = editingSourceId.startsWith('drive:')
+      ? editingSourceId.slice('drive:'.length)
+      : null;
+    if (!fileId) return;
+
+    if (!draftContent.trim()) {
+      setEditorNotice(t('editor.saveEmpty'));
+      return;
+    }
+
+    setSaveLoading(true);
+    setEditorNotice(null);
+    try {
+      await updateSourceContent(authToken, fileId, draftContent);
+      onDriveSourceUpdated?.(editingSourceId, draftContent);
+      setSourceOverrides((current) => {
+        if (!(editingSourceId in current)) return current;
+        const next = { ...current };
+        delete next[editingSourceId];
+        return next;
+      });
+      setActiveSourceId(editingSourceId);
+      setIsEditingSource(false);
+      setEditingSourceId(null);
+      setDraftContent('');
+      setLinkError(null);
+      setEditorNotice(null);
+    } catch (caught) {
+      setEditorNotice(caught instanceof Error ? caught.message : t('editor.saveFailed'));
+    } finally {
+      setSaveLoading(false);
+    }
   }
 
   async function handleAddLink() {
     const trimmed = linkUrl.trim();
     if (!trimmed) {
-      setLinkError('Bir bağlantı yapıştırın.');
+      setLinkError(t('sources.linkRequired'));
       return;
     }
     if (!isAllowedDbmlUrl(trimmed)) {
-      setLinkError('Bağlantı http(s) olmalı ve .dbml veya .txt ile bitmeli.');
+      setLinkError(t('sources.linkInvalid'));
       return;
     }
 
@@ -2602,12 +2603,12 @@ function DbmlErdViewerContent({
     try {
       const response = await fetch(trimmed);
       if (!response.ok) {
-        throw new Error(`Dosya alınamadı (${response.status}).`);
+        throw new Error(t('error.fetchFile', { status: response.status }));
       }
 
       const content = await response.text();
       if (!content.trim()) {
-        throw new Error('Bağlantıdaki dosya boş.');
+        throw new Error(t('sources.linkEmpty'));
       }
 
       const fileName = fileNameFromUrl(trimmed);
@@ -2628,10 +2629,10 @@ function DbmlErdViewerContent({
       const message =
         caughtError instanceof Error
           ? caughtError.message
-          : 'Bağlantı yüklenemedi. CORS engeli olabilir.';
+          : t('sources.linkFailed');
       setLinkError(
         message.includes('Failed to fetch')
-          ? 'Bağlantı yüklenemedi. Kaynak CORS’a izin vermiyor olabilir.'
+          ? t('sources.linkCors')
           : message,
       );
     } finally {
@@ -2646,26 +2647,36 @@ function DbmlErdViewerContent({
       data-theme={theme}
       data-scheme={THEME_META[theme].scheme}
       style={{ height, ['--right-side-width' as string]: `${rightSideWidth}px` }}
-      aria-label={title}
+      aria-label={resolvedTitle}
     >
       <aside className={`dbml-side dbml-side--left${leftOpen ? ' is-open' : ''}`}>
         <div className="dbml-side__header">
-          <div>
-            <div className="dbml-side__eyebrow">{isEditingSource ? 'Düzenle' : 'Kaynak'}</div>
-            <h2>
-              {isEditingSource
-                ? editingSource?.name ?? 'DBML'
-                : '.dbml dosyaları'}
-            </h2>
+          <div className="dbml-side__header-main">
+            <div className="dbml-side__title-row">
+              <h2>
+                {isEditingSource
+                  ? editingSource?.name ?? 'DBML'
+                  : t('nav.files')}
+              </h2>
+              {!isEditingSource && <LanguageSwitcher className="lang-switch--side" />}
+            </div>
+            {userLabel && !isEditingSource && (
+              <div className="dbml-side__account">
+                <span className="dbml-side__account-name" title={userLabel}>
+                  {userLabel}
+                </span>
+                {isSuperAdmin && <span className="dbml-side__badge">{t('badge.admin')}</span>}
+              </div>
+            )}
           </div>
           {isEditingSource ? (
             <div className="dbml-side__header-actions">
-              <button type="button" className="dbml-icon-button" onClick={cancelSourceEditor} aria-label="Düzenlemeyi iptal et" title="İptal">
+              <button type="button" className="dbml-icon-button" onClick={cancelSourceEditor} aria-label={t('editor.cancelEdit')} title={t('editor.cancel')}>
                 ×
               </button>
             </div>
           ) : (
-            <button type="button" className="dbml-icon-button" onClick={() => setLeftOpen(false)} aria-label="Sol menüyü kapat">
+            <button type="button" className="dbml-icon-button" onClick={() => setLeftOpen(false)} aria-label={t('nav.closeLeft')}>
               ←
             </button>
           )}
@@ -2675,81 +2686,98 @@ function DbmlErdViewerContent({
           {isEditingSource ? (
             <>
               <div className="dbml-source-editor__toolbar">
-                <span className="dbml-source-editor__hint">DBML metnini düzenleyin</span>
+                <span className="dbml-source-editor__hint">
+                  {isSuperAdmin && editingSource?.kind === 'drive'
+                    ? t('editor.hintDrive')
+                    : t('editor.hint')}
+                </span>
                 <div className="dbml-source-editor__actions">
-                  <button type="button" className="dbml-source-editor__button" onClick={cancelSourceEditor}>
-                    İptal
+                  <button
+                    type="button"
+                    className="dbml-source-editor__button"
+                    onClick={cancelSourceEditor}
+                    disabled={saveLoading}
+                  >
+                    {t('editor.cancel')}
                   </button>
                   <button
                     type="button"
-                    className="dbml-source-editor__button dbml-source-editor__button--primary"
+                    className="dbml-source-editor__button"
                     onClick={applySourceEditor}
+                    disabled={saveLoading}
                   >
-                    Uygula
+                    {t('editor.apply')}
                   </button>
+                  {isSuperAdmin && editingSource?.kind === 'drive' && (
+                    <button
+                      type="button"
+                      className="dbml-source-editor__button dbml-source-editor__button--primary"
+                      onClick={() => void saveSourceEditor()}
+                      disabled={saveLoading || !authToken}
+                    >
+                      {saveLoading ? t('editor.saving') : t('editor.save')}
+                    </button>
+                  )}
                 </div>
               </div>
+              {editorNotice && (
+                <div className="dbml-source-editor__notice" role="status">
+                  {editorNotice}
+                </div>
+              )}
               <textarea
                 className="dbml-source-editor__textarea"
                 value={draftContent}
-                onChange={(event) => setDraftContent(event.target.value)}
+                onChange={(event) => {
+                  setDraftContent(event.target.value);
+                  if (editorNotice) setEditorNotice(null);
+                }}
                 spellCheck={false}
-                aria-label="DBML metin editörü"
+                aria-label={t('editor.textareaAria')}
+                disabled={saveLoading}
               />
             </>
           ) : (
             <>
-          <label className="dbml-theme-select">
-            <span className="dbml-theme-select__label">Tema</span>
-            <span className="dbml-theme-select__control">
-              <span
-                className="dbml-theme-select__swatch"
-                style={
-                  {
-                    ['--swatch-bg' as string]: THEME_META[theme].swatchBg,
-                    ['--swatch-accent' as string]: THEME_META[theme].swatchAccent,
-                  }
+          <label className="dbml-theme-select dbml-theme-select--compact">
+            <span
+              className="dbml-theme-select__swatch"
+              style={
+                {
+                  ['--swatch-bg' as string]: THEME_META[theme].swatchBg,
+                  ['--swatch-accent' as string]: THEME_META[theme].swatchAccent,
                 }
-                aria-hidden="true"
-              />
-              <select
-                value={theme}
-                onChange={(event) => setTheme(event.target.value as ThemeId)}
-                aria-label="Tema"
-              >
-                {THEME_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </span>
+              }
+              aria-hidden="true"
+            />
+            <select
+              value={theme}
+              onChange={(event) => setTheme(event.target.value as ThemeId)}
+              aria-label={t('theme.label')}
+            >
+              {THEME_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {t(`theme.${option.id}` as MessageKey)}
+                </option>
+              ))}
+            </select>
           </label>
 
           <div className="dbml-source-actions">
             <div className="dbml-source-actions__row">
               <button type="button" className="dbml-side__upload" onClick={() => fileInputRef.current?.click()}>
-                Dosya yükle
+                {t('sources.upload')}
               </button>
               <button
                 type="button"
                 className="dbml-side__export"
                 onClick={handleExport}
                 disabled={!activeSource?.content.trim()}
-                title="Aktif kaynağı .dbml olarak indir"
+                title={t('sources.exportTitle')}
               >
-                Export
+                {t('sources.export')}
               </button>
             </div>
-            <button
-              type="button"
-              className="dbml-side__drive"
-              onClick={() => void handleOpenGoogleDrive()}
-              disabled={driveLoading}
-              title="Google hesabınla Drive’dan kısıtlı .dbml / .txt aç"
-            >
-              {driveLoading ? 'Google Drive…' : 'Google Drive'}
-            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -2771,20 +2799,31 @@ function DbmlErdViewerContent({
                     void handleAddLink();
                   }
                 }}
-                placeholder="https://.../dosya.dbml"
-                aria-label="DBML veya TXT bağlantısı"
+                placeholder={t('sources.linkPlaceholder')}
+                aria-label={t('sources.linkAria')}
               />
               <button type="button" onClick={() => void handleAddLink()} disabled={linkLoading}>
-                {linkLoading ? '...' : 'Ekle'}
+                {linkLoading ? t('sources.adding') : t('sources.add')}
               </button>
             </div>
-            {linkError && <div className="dbml-link-form__error">{linkError}</div>}
+            {(linkError || sourcesError) && (
+              <div className="dbml-link-form__error">{linkError || sourcesError}</div>
+            )}
           </div>
+
+          {sourcesLoading && (
+            <div className="dbml-sources-loader" role="status" aria-live="polite">
+              <span className="dbml-sources-loader__spinner" aria-hidden="true" />
+              <div className="dbml-sources-loader__text">
+                <strong>{t('sources.loadingTitle')}</strong>
+                <span>{t('sources.loadingHint')}</span>
+              </div>
+            </div>
+          )}
 
           <ul className="dbml-file-list">
             {allSources.map((source) => {
-              const canRemove =
-                source.kind === 'upload' || source.kind === 'link' || source.kind === 'drive';
+              const canRemove = source.kind === 'upload' || source.kind === 'link';
               return (
                 <li key={source.id} className="dbml-file-list__row">
                   <button
@@ -2796,13 +2835,13 @@ function DbmlErdViewerContent({
                     <span className="dbml-file-list__name">{source.name}</span>
                     <span className="dbml-file-list__meta">
                       {source.kind === 'link'
-                        ? 'Bağlantı'
+                        ? t('sources.kind.link')
                         : source.kind === 'upload'
-                          ? 'Yüklenen'
+                          ? t('sources.kind.upload')
                           : source.kind === 'drive'
-                            ? 'Google Drive'
+                            ? source.label || t('sources.kind.drive')
                             : source.label}
-                      {sourceOverrides[source.id] ? ' · düzenlendi' : ''}
+                      {sourceOverrides[source.id] ? ` · ${t('sources.edited')}` : ''}
                     </span>
                   </button>
                   <div className="dbml-file-list__actions">
@@ -2810,8 +2849,8 @@ function DbmlErdViewerContent({
                       type="button"
                       className="dbml-file-list__edit"
                       onClick={() => openSourceEditor(source.id)}
-                      title="Metni düzenle"
-                      aria-label={`${source.name} metnini düzenle`}
+                      title={t('editor.editTitle')}
+                      aria-label={`${source.name} ${t('editor.editAria')}`}
                     >
                       <EditIcon />
                     </button>
@@ -2820,8 +2859,8 @@ function DbmlErdViewerContent({
                         type="button"
                         className="dbml-file-list__delete"
                         onClick={() => handleRemoveSource(source.id)}
-                        title="Kaynağı sil"
-                        aria-label={`${source.name} kaynağını sil`}
+                        title={t('editor.deleteTitle')}
+                        aria-label={`${source.name} ${t('editor.deleteAria')}`}
                       >
                         <TrashIcon />
                       </button>
@@ -2831,7 +2870,7 @@ function DbmlErdViewerContent({
               );
             })}
             {allSources.length === 0 && (
-              <li className="dbml-side__empty">Henüz kaynak yok. Dosya yükleyin veya bağlantı ekleyin.</li>
+              <li className="dbml-side__empty">{t('sources.empty')}</li>
             )}
           </ul>
 
@@ -2844,9 +2883,9 @@ function DbmlErdViewerContent({
               onClick={() => setShowEdgeInfo((current) => !current)}
             >
               <span className="dbml-edge-info-toggle__text">
-                <span className="dbml-edge-info-toggle__title">Çizgi bilgisi</span>
+                <span className="dbml-edge-info-toggle__title">{t('edgeInfo.title')}</span>
                 <span className="dbml-edge-info-toggle__hint">
-                  {showEdgeInfo ? 'Tıklayınca info açık' : 'Tıklayınca info kapalı'}
+                  {showEdgeInfo ? t('edgeInfo.on') : t('edgeInfo.off')}
                 </span>
               </span>
               <span className="dbml-edge-info-toggle__switch" aria-hidden="true">
@@ -2857,17 +2896,41 @@ function DbmlErdViewerContent({
             </>
           )}
         </div>
+
+        {!isEditingSource && (onOpenAdmin || onLogout) && (
+          <div className="dbml-side__dock">
+            {onOpenAdmin && (
+              <button type="button" className="dbml-side__dock-btn dbml-side__dock-btn--admin" onClick={onOpenAdmin}>
+                {t('nav.admin')}
+              </button>
+            )}
+            {onLogout && (
+              <button type="button" className="dbml-side__dock-btn dbml-side__dock-btn--logout" onClick={onLogout}>
+                {t('nav.logout')}
+              </button>
+            )}
+          </div>
+        )}
       </aside>
 
       <div className="dbml-canvas">
+        {sourcesLoading && (
+          <div className="dbml-canvas-loader" role="status" aria-live="polite">
+            <div className="dbml-canvas-loader__card">
+              <span className="dbml-sources-loader__spinner dbml-sources-loader__spinner--lg" aria-hidden="true" />
+              <strong>{t('sources.loadingTitle')}</strong>
+              <span>{t('sources.loadingCanvas')}</span>
+            </div>
+          </div>
+        )}
         {!leftOpen && (
           <button
             type="button"
             className="dbml-rail-toggle dbml-rail-toggle--left"
             onClick={() => setLeftOpen(true)}
-            aria-label="Sol menüyü aç"
+            aria-label={t('nav.openLeft')}
           >
-            Dosyalar
+            {t('nav.files')}
           </button>
         )}
 
@@ -2876,9 +2939,9 @@ function DbmlErdViewerContent({
             type="button"
             className="dbml-rail-toggle dbml-rail-toggle--right"
             onClick={() => setRightOpen(true)}
-            aria-label="Sağ menüyü aç"
+            aria-label={t('nav.openRight')}
           >
-            Gezgin
+            {t('nav.explorer')}
           </button>
         )}
 
@@ -2947,8 +3010,8 @@ function DbmlErdViewerContent({
               onClick={() => {
                 void toggleFullscreen();
               }}
-              title={isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
-              aria-label={isFullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
+              title={isFullscreen ? t('view.exitFullscreen') : t('view.fullscreen')}
+              aria-label={isFullscreen ? t('view.exitFullscreen') : t('view.fullscreen')}
             >
               {isFullscreen ? (
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -2987,8 +3050,8 @@ function DbmlErdViewerContent({
                   return next;
                 });
               }}
-              title={viewLocked ? 'Kilidi aç — alan zoom' : 'Kilitle — sürükleyerek kaydır'}
-              aria-label={viewLocked ? 'Görünüm kilidini aç' : 'Görünümü kilitle'}
+              title={viewLocked ? t('view.unlock') : t('view.lock')}
+              aria-label={viewLocked ? t('view.unlockAria') : t('view.lockAria')}
             >
               {viewLocked ? (
                 <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -3036,13 +3099,13 @@ function DbmlErdViewerContent({
 
           <Panel position="top-center" className="dbml-toolbar nodrag nopan">
             <div className="dbml-toolbar__title">
-              <span className="dbml-toolbar__eyebrow">ER diyagramı</span>
-              <h1>{title}</h1>
+              <span className="dbml-toolbar__eyebrow">{t('toolbar.eyebrow')}</span>
+              <h1>{resolvedTitle}</h1>
               {activeSource && <span className="dbml-toolbar__file">{activeSource.name}</span>}
             </div>
 
             <div className="dbml-toolbar__actions">
-              <div className="dbml-density" role="group" aria-label="Yerleşim sıklığı">
+              <div className="dbml-density" role="group" aria-label={t('toolbar.density')}>
                 {LAYOUT_DENSITY_OPTIONS.map((option) => (
                   <button
                     key={option}
@@ -3054,9 +3117,9 @@ function DbmlErdViewerContent({
                       skipFitViewRef.current = true;
                       setLayoutDensity(option);
                     }}
-                    title={LAYOUT_DENSITY_PRESETS[option].title}
+                    title={t(LAYOUT_DENSITY_PRESETS[option].titleKey)}
                   >
-                    {LAYOUT_DENSITY_PRESETS[option].label}
+                    {t(LAYOUT_DENSITY_PRESETS[option].labelKey)}
                   </button>
                 ))}
               </div>
@@ -3065,17 +3128,10 @@ function DbmlErdViewerContent({
                 className="dbml-toolbar__button"
                 onClick={() => fitView({ padding: 0.12, duration: 450, maxZoom: 1 })}
               >
-                Tümü
+                {t('toolbar.fit')}
               </button>
               <button type="button" className="dbml-toolbar__button" onClick={focusSearchResult}>
-                Sonuca git
-              </button>
-              <button
-                type="button"
-                className="dbml-toolbar__button dbml-toolbar__button--primary"
-                onClick={() => setLayoutVersion((version) => version + 1)}
-              >
-                Yerleştir
+                {t('toolbar.focusResult')}
               </button>
             </div>
           </Panel>
@@ -3085,12 +3141,12 @@ function DbmlErdViewerContent({
             <span><b className="dbml-legend__dot dbml-legend__dot--fk" />FK</span>
             <span><b className="dbml-legend__dot dbml-legend__dot--enum" />E Enum</span>
             <span><b className="dbml-legend__dot dbml-legend__dot--ai" />AI Auto Increment</span>
-            <span><b>1</b> Tek</span>
-            <span><b>N</b> Çok</span>
+            <span><b>1</b> {t('legend.one')}</span>
+            <span><b>N</b> {t('legend.many')}</span>
             <span className="dbml-legend__hint">
               {viewLocked
-                ? 'Kilitli: sürükleyerek kaydır'
-                : 'Tabloyu sürükleyerek taşı · boş alanda zoom'}
+                ? t('legend.locked')
+                : t('legend.hint')}
             </span>
           </Panel>
 
@@ -3117,31 +3173,31 @@ function DbmlErdViewerContent({
             onPointerDown={startRightResize}
             role="separator"
             aria-orientation="vertical"
-            aria-label="Sağ menü genişliğini ayarla"
-            title="Sürükleyerek genişlet"
+            aria-label={t('nav.resizeRight')}
+            title={t('nav.resizeRightTitle')}
           />
         )}
         <div className="dbml-side__header">
           <div>
-            <div className="dbml-side__eyebrow">Gezgin</div>
-            <h2>Şema & arama</h2>
+            <div className="dbml-side__eyebrow">{t('nav.explorer')}</div>
+            <h2>{t('nav.schemaSearch')}</h2>
           </div>
-          <button type="button" className="dbml-icon-button" onClick={() => setRightOpen(false)} aria-label="Sağ menüyü kapat">
+          <button type="button" className="dbml-icon-button" onClick={() => setRightOpen(false)} aria-label={t('nav.closeRight')}>
             →
           </button>
         </div>
 
         <div className="dbml-side__body">
           <label className="dbml-search-select">
-            <span className="dbml-search-select__label">Filtre</span>
+            <span className="dbml-search-select__label">{t('search.filter')}</span>
             <select
               value={searchScopeFilter}
               onChange={(event) => setSearchScopeFilter(event.target.value as SearchScopeFilter)}
-              aria-label="Arama filtresi"
+              aria-label={t('search.filterAria')}
             >
               {SEARCH_SCOPE_OPTIONS.map((option) => (
                 <option key={option.id} value={option.id}>
-                  {option.label}
+                  {t(option.labelKey)}
                 </option>
               ))}
             </select>
@@ -3155,34 +3211,34 @@ function DbmlErdViewerContent({
               onKeyDown={(event) => {
                 if (event.key === 'Enter') focusSearchResult();
               }}
-              placeholder="Şema, grup, tablo veya kolon"
+              placeholder={t('search.placeholder')}
             />
             {searchTerm && (
-              <button type="button" onClick={() => setSearchTerm('')} aria-label="Aramayı temizle">
+              <button type="button" onClick={() => setSearchTerm('')} aria-label={t('search.clear')}>
                 ×
               </button>
             )}
           </label>
 
-          <div className="dbml-side__stats" aria-label="Özet">
+          <div className="dbml-side__stats" aria-label={t('stats.summary')}>
             <span>
               <strong>{groupBy === 'schema' ? navigatorGroups.length : tableGroups.length}</strong>
-              {groupBy === 'schema' ? 'şema' : 'grup'}
+              {groupBy === 'schema' ? t('stats.schema') : t('stats.group')}
             </span>
             <span className="dbml-side__stats-sep" aria-hidden="true">·</span>
             <span>
               <strong>{visibleTableCount}/{nodes.length}</strong>
-              tablo
+              {t('stats.table')}
             </span>
             <span className="dbml-side__stats-sep" aria-hidden="true">·</span>
             <span>
               <strong>{edges.length}</strong>
-              ilişki
+              {t('stats.relation')}
             </span>
             <span className="dbml-side__stats-sep" aria-hidden="true">·</span>
             <span>
               <strong>{enumCount}</strong>
-              enum
+              {t('stats.enum')}
             </span>
           </div>
 
@@ -3193,10 +3249,10 @@ function DbmlErdViewerContent({
                 className="dbml-side__warning-toggle"
                 onClick={() => setWarningsOpen((open) => !open)}
                 aria-expanded={warningsOpen}
-                title="DBML parse uyarılarını göster"
+                title={t('warnings.title')}
               >
                 <span>
-                  <strong>{warnings.length}</strong> uyarı
+                  {t('warnings.count', { count: warnings.length })}
                 </span>
                 <span className="dbml-side__warning-chevron" aria-hidden="true">
                   {warningsOpen ? '▴' : '▾'}
@@ -3221,15 +3277,15 @@ function DbmlErdViewerContent({
                 aria-expanded={groupByOpen}
               >
                 <LayersIcon />
-                <span>Gruplandır: {groupBy === 'schema' ? 'Şema' : 'Tablo Grubu'}</span>
+                <span>{t('group.by')}: {groupBy === 'schema' ? t('group.schema') : t('group.tableGroup')}</span>
                 <span className="dbml-groupby__chevron">{groupByOpen ? '▴' : '▾'}</span>
               </button>
               <button
                 type="button"
                 className="dbml-visibility-button"
                 onClick={toggleAllVisibility}
-                title={hiddenTableIds.size === 0 ? 'Tümünü gizle' : 'Tümünü göster'}
-                aria-label={hiddenTableIds.size === 0 ? 'Tümünü gizle' : 'Tümünü göster'}
+                title={hiddenTableIds.size === 0 ? t('visibility.hideAll') : t('visibility.showAll')}
+                aria-label={hiddenTableIds.size === 0 ? t('visibility.hideAll') : t('visibility.showAll')}
               >
                 <EyeIcon closed={hiddenTableIds.size > 0 && hiddenTableIds.size === nodes.length} />
               </button>
@@ -3245,7 +3301,7 @@ function DbmlErdViewerContent({
                     setGroupByOpen(false);
                   }}
                 >
-                  <span>Şema</span>
+                  <span>{t('group.schema')}</span>
                   {groupBy === 'schema' && <span className="dbml-groupby__check">✓</span>}
                 </button>
                 <button
@@ -3256,7 +3312,7 @@ function DbmlErdViewerContent({
                     setGroupByOpen(false);
                   }}
                 >
-                  <span>Tablo Grubu</span>
+                  <span>{t('group.tableGroup')}</span>
                   {groupBy === 'tableGroup' && <span className="dbml-groupby__check">✓</span>}
                 </button>
               </div>
@@ -3292,8 +3348,8 @@ function DbmlErdViewerContent({
                         type="button"
                         className="dbml-visibility-button"
                         onClick={(event) => void copyNavigatorText(group.name, event)}
-                        title="Grup adını kopyala"
-                        aria-label={`${group.name} adını kopyala`}
+                        title={t('copy.groupName')}
+                        aria-label={t('copy.nameAria', { name: group.name })}
                       >
                         <CopyIcon />
                       </button>
@@ -3301,8 +3357,8 @@ function DbmlErdViewerContent({
                         type="button"
                         className="dbml-visibility-button"
                         onClick={() => toggleGroupVisibility(group)}
-                        title={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
-                        aria-label={groupHidden ? 'Grubu göster' : 'Grubu gizle'}
+                        title={groupHidden ? t('visibility.showGroup') : t('visibility.hideGroup')}
+                        aria-label={groupHidden ? t('visibility.showGroup') : t('visibility.hideGroup')}
                       >
                         <EyeIcon closed={groupHidden} />
                       </button>
@@ -3332,8 +3388,8 @@ function DbmlErdViewerContent({
                                   type="button"
                                   className="dbml-visibility-button"
                                   onClick={(event) => void copyNavigatorText(table.fullName, event)}
-                                  title="Tablo adını kopyala"
-                                  aria-label={`${table.fullName} adını kopyala`}
+                                  title={t('copy.tableName')}
+                                  aria-label={t('copy.nameAria', { name: table.fullName })}
                                 >
                                   <CopyIcon />
                                 </button>
@@ -3341,8 +3397,8 @@ function DbmlErdViewerContent({
                                   type="button"
                                   className="dbml-visibility-button"
                                   onClick={() => toggleTableVisibility(table.id)}
-                                  title={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
-                                  aria-label={isHidden ? 'Tabloyu göster' : 'Tabloyu gizle'}
+                                  title={isHidden ? t('visibility.showTable') : t('visibility.hideTable')}
+                                  aria-label={isHidden ? t('visibility.showTable') : t('visibility.hideTable')}
                                 >
                                   <EyeIcon closed={isHidden} />
                                 </button>
@@ -3367,8 +3423,8 @@ function DbmlErdViewerContent({
             {filteredNavigatorGroups.length === 0 && (
               <div className="dbml-side__empty">
                 {groupBy === 'tableGroup' && tableGroups.length === 0
-                  ? 'DBML içinde TableGroup yok.'
-                  : 'Eşleşen şema/tablo yok.'}
+                  ? t('empty.noTableGroup')
+                  : t('empty.noMatch')}
               </div>
             )}
           </div>
@@ -3380,7 +3436,7 @@ function DbmlErdViewerContent({
           className="dbml-data-modal"
           role="dialog"
           aria-modal="true"
-          aria-label={`${dataModalTable.table.fullName} veri örneği`}
+          aria-label={t('data.sampleAria', { name: dataModalTable.table.fullName })}
           onClick={() => setDataModalTableId(null)}
         >
           <div className="dbml-data-modal__panel nodrag nopan" onClick={(event) => event.stopPropagation()}>
@@ -3390,7 +3446,7 @@ function DbmlErdViewerContent({
                   <TableIcon />
                 </span>
                 <div>
-                  <div className="dbml-data-modal__eyebrow">Tablo verisi</div>
+                  <div className="dbml-data-modal__eyebrow">{t('data.eyebrow')}</div>
                   <h3>{dataModalTable.table.fullName}</h3>
                 </div>
                 {dataModalTable.table.note && (
@@ -3401,13 +3457,13 @@ function DbmlErdViewerContent({
               </div>
               <div className="dbml-data-modal__actions">
                 <button type="button" className="dbml-toolbar__button" onClick={downloadSampleCsv}>
-                  İndir
+                  {t('data.download')}
                 </button>
                 <button
                   type="button"
                   className="dbml-toolbar__button"
                   onClick={() => setDataModalTableId(null)}
-                  aria-label="Kapat"
+                  aria-label={t('data.close')}
                 >
                   ×
                 </button>
@@ -3415,7 +3471,7 @@ function DbmlErdViewerContent({
             </div>
 
             <p className="dbml-data-modal__hint">
-              Örnek satırlar alan tiplerinden üretilir; gerçek veritabanı bağlantısı yoktur.
+              {t('data.hint')}
             </p>
 
             <div className="dbml-data-modal__table-wrap">

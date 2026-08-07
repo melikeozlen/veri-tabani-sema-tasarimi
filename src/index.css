@@ -5,24 +5,46 @@ body {
   background: #f7f7f5;
 }
 html[data-theme="dark"] body,
-body:has(.dbml-erd-viewer[data-theme="dark"]) {
+body:has(.dbml-erd-viewer[data-theme="dark"]),
+body:has(.admin-page[data-theme="dark"]),
+body:has(.login-page[data-theme="dark"]) {
   background: #0f1419;
 }
 html[data-theme="night"] body,
-body:has(.dbml-erd-viewer[data-theme="night"]) {
+body:has(.dbml-erd-viewer[data-theme="night"]),
+body:has(.admin-page[data-theme="night"]),
+body:has(.login-page[data-theme="night"]) {
   background: #0b1020;
 }
 html[data-theme="sea"] body,
-body:has(.dbml-erd-viewer[data-theme="sea"]) {
+body:has(.dbml-erd-viewer[data-theme="sea"]),
+body:has(.admin-page[data-theme="sea"]),
+body:has(.login-page[data-theme="sea"]) {
   background: #f3f8f7;
 }
 html[data-theme="corp-light"] body,
-body:has(.dbml-erd-viewer[data-theme="corp-light"]) {
+body:has(.dbml-erd-viewer[data-theme="corp-light"]),
+body:has(.admin-page[data-theme="corp-light"]),
+body:has(.login-page[data-theme="corp-light"]) {
   background: #f7f7f5;
 }
 html[data-theme="corp-dark"] body,
-body:has(.dbml-erd-viewer[data-theme="corp-dark"]) {
+body:has(.dbml-erd-viewer[data-theme="corp-dark"]),
+body:has(.admin-page[data-theme="corp-dark"]),
+body:has(.login-page[data-theme="corp-dark"]) {
   background: #1c1c1b;
+}
+html[data-theme="light"] body,
+body:has(.dbml-erd-viewer[data-theme="light"]),
+body:has(.admin-page[data-theme="light"]),
+body:has(.login-page[data-theme="light"]) {
+  background: #fbfcfd;
+}
+html[data-theme="split"] body,
+body:has(.dbml-erd-viewer[data-theme="split"]),
+body:has(.admin-page[data-theme="split"]),
+body:has(.login-page[data-theme="split"]) {
+  background: #d9dee6;
 }
 button, input { font: inherit; }
 
