@@ -26,6 +26,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent } from 'react';
+import { isGoogleDriveConfigured, pickAndLoadGoogleDriveFile } from '../lib/googleDrive';
 
 // -----------------------------------------------------------------------------
 // DBML model types
@@ -162,7 +163,7 @@ export interface DbmlSource {
   name: string;
   label: string;
   content: string;
-  kind?: 'local' | 'upload' | 'link';
+  kind?: 'local' | 'upload' | 'link' | 'drive';
   url?: string;
 }
 
@@ -1699,6 +1700,7 @@ function DbmlErdViewerContent({
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
+  const [driveLoading, setDriveLoading] = useState(false);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
   const hoverClearTimerRef = useRef<number | null>(null);
@@ -2207,6 +2209,44 @@ function DbmlErdViewerContent({
     setLinkError(null);
   }
 
+  async function handleOpenGoogleDrive() {
+    if (!isGoogleDriveConfigured()) {
+      setLinkError(
+        'Google Drive ayarlı değil. Proje köküne .env ekleyip VITE_GOOGLE_CLIENT_ID, VITE_GOOGLE_API_KEY ve VITE_GOOGLE_APP_ID doldurun (bkz. .env.example).',
+      );
+      return;
+    }
+
+    setDriveLoading(true);
+    setLinkError(null);
+
+    try {
+      const file = await pickAndLoadGoogleDriveFile();
+      if (!file) return;
+
+      const id = `drive:${file.id}`;
+      const source: DbmlSource = {
+        id,
+        name: file.name,
+        label: sourceDisplayName(file.name),
+        content: file.content,
+        kind: 'drive',
+        url: file.url,
+      };
+
+      setUploadedSources((current) => [source, ...current.filter((item) => item.id !== id)]);
+      setActiveSourceId(id);
+    } catch (caughtError) {
+      setLinkError(
+        caughtError instanceof Error
+          ? caughtError.message
+          : 'Google Drive dosyası açılamadı.',
+      );
+    } finally {
+      setDriveLoading(false);
+    }
+  }
+
   function handleRemoveSource(sourceId: string) {
     const removable = uploadedSources.find((item) => item.id === sourceId);
     if (!removable) return;
@@ -2438,6 +2478,15 @@ function DbmlErdViewerContent({
                 Export
               </button>
             </div>
+            <button
+              type="button"
+              className="dbml-side__drive"
+              onClick={() => void handleOpenGoogleDrive()}
+              disabled={driveLoading}
+              title="Google hesabınla Drive’dan kısıtlı .dbml / .txt aç"
+            >
+              {driveLoading ? 'Google Drive…' : 'Google Drive'}
+            </button>
             <input
               ref={fileInputRef}
               type="file"
@@ -2471,7 +2520,8 @@ function DbmlErdViewerContent({
 
           <ul className="dbml-file-list">
             {allSources.map((source) => {
-              const canRemove = source.kind === 'upload' || source.kind === 'link';
+              const canRemove =
+                source.kind === 'upload' || source.kind === 'link' || source.kind === 'drive';
               return (
                 <li key={source.id} className="dbml-file-list__row">
                   <button
@@ -2482,7 +2532,13 @@ function DbmlErdViewerContent({
                   >
                     <span className="dbml-file-list__name">{source.name}</span>
                     <span className="dbml-file-list__meta">
-                      {source.kind === 'link' ? 'Bağlantı' : source.kind === 'upload' ? 'Yüklenen' : source.label}
+                      {source.kind === 'link'
+                        ? 'Bağlantı'
+                        : source.kind === 'upload'
+                          ? 'Yüklenen'
+                          : source.kind === 'drive'
+                            ? 'Google Drive'
+                            : source.label}
                       {sourceOverrides[source.id] ? ' · düzenlendi' : ''}
                     </span>
                   </button>

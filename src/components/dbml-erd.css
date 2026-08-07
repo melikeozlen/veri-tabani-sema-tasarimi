@@ -587,6 +587,7 @@
 
 .dbml-side__upload,
 .dbml-side__export,
+.dbml-side__drive,
 .dbml-icon-button,
 .dbml-toolbar__button,
 .dbml-rail-toggle,
@@ -598,7 +599,8 @@
 }
 
 .dbml-side__upload,
-.dbml-side__export {
+.dbml-side__export,
+.dbml-side__drive {
   height: 34px;
   border-radius: 8px;
   color: var(--dbml-text);
@@ -619,18 +621,25 @@
   border: 1px solid var(--dbml-border);
 }
 
+.dbml-side__drive {
+  width: 100%;
+  border: 1px solid var(--dbml-border);
+}
+
 .dbml-side__upload:hover {
   border-color: var(--dbml-accent);
   background: var(--dbml-accent-soft);
 }
 
-.dbml-side__export:hover:not(:disabled) {
+.dbml-side__export:hover:not(:disabled),
+.dbml-side__drive:hover:not(:disabled) {
   border-color: var(--dbml-accent);
   color: var(--dbml-accent);
   background: var(--dbml-accent-soft);
 }
 
-.dbml-side__export:disabled {
+.dbml-side__export:disabled,
+.dbml-side__drive:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -2108,4 +2117,8 @@
   .dbml-toolbar__button--primary {
     grid-column: 1 / -1;
   }
+}
+
+.dbml-side__drive {
+  display: none;
 }
