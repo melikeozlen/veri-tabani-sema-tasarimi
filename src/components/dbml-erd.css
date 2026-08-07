@@ -400,7 +400,54 @@
 }
 
 .dbml-side--right.is-open {
+  flex: 0 0 var(--right-side-width, var(--side-width));
+  flex-basis: var(--right-side-width, var(--side-width));
+  width: var(--right-side-width, var(--side-width));
+  min-width: var(--right-side-width, var(--side-width));
+  max-width: var(--right-side-width, var(--side-width));
   border-left: 1px solid var(--dbml-border);
+  position: relative;
+}
+
+.dbml-side__resize-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  z-index: 5;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.dbml-side__resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  width: 2px;
+  height: 36px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--dbml-muted) 55%, transparent);
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.dbml-side__resize-handle:hover::after,
+.dbml-side--right:hover .dbml-side__resize-handle::after,
+body.dbml-resizing-side .dbml-side__resize-handle::after {
+  opacity: 1;
+  background: var(--dbml-accent);
+}
+
+body.dbml-resizing-side {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+body.dbml-resizing-side * {
+  cursor: col-resize !important;
 }
 
 .dbml-side__header {
@@ -1215,12 +1262,35 @@
 .dbml-table-node__title {
   overflow: hidden;
   max-width: 250px;
+  padding: 0;
+  border: 0;
   color: var(--header-fg);
+  background: transparent;
+  font: inherit;
   font-size: 14px;
   font-weight: 700;
   line-height: 1.2;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  transform-origin: left center;
+}
+
+.dbml-table-node__title:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dbml-table-node__title.is-copied {
+  text-decoration: none;
+  animation: dbml-title-pop 280ms ease;
+}
+
+@keyframes dbml-title-pop {
+  0% { transform: scale(1); }
+  40% { transform: scale(0.92); }
+  100% { transform: scale(1); }
 }
 
 .dbml-table-node__count {
@@ -2105,6 +2175,13 @@
     flex-basis: var(--side-width);
     width: var(--side-width);
     box-shadow: var(--dbml-shadow);
+  }
+
+  .dbml-side--right.is-open {
+    flex-basis: var(--right-side-width, var(--side-width));
+    width: var(--right-side-width, var(--side-width));
+    min-width: var(--right-side-width, var(--side-width));
+    max-width: var(--right-side-width, var(--side-width));
   }
 
   .dbml-toolbar__title { flex-wrap: wrap; }

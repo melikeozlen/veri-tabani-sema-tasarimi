@@ -25,7 +25,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { isGoogleDriveConfigured, pickAndLoadGoogleDriveFile } from '../lib/googleDrive';
 import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersistence';
 
@@ -824,6 +824,21 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
   const { table, foreignKeyFields, dimmed, searchTerm, searchScopes, headerColor, onOpenTableData } = data;
   const normalizedSearch = searchTerm.trim().toLocaleLowerCase('tr-TR');
   const highlightColumns = normalizedSearch.length > 0 && searchScopes.includes('column');
+  const [copiedName, setCopiedName] = useState(false);
+  const copyResetRef = useRef<number | null>(null);
+
+  async function copyTableName(event: MouseEvent) {
+    event.stopPropagation();
+    event.preventDefault();
+    try {
+      await navigator.clipboard.writeText(table.fullName);
+      setCopiedName(true);
+      if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current);
+      copyResetRef.current = window.setTimeout(() => setCopiedName(false), 280);
+    } catch {
+      // Clipboard API yoksa sessizce geç.
+    }
+  }
 
   return (
     <article className={`dbml-table-node${dimmed ? ' is-dimmed' : ''}`}>
@@ -834,7 +849,16 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
         <div className="dbml-table-node__heading">
           {table.schema && <div className="dbml-table-node__schema">{table.schema}</div>}
           <div className="dbml-table-node__title-row">
-            <div className="dbml-table-node__title">{table.name}</div>
+            <button
+              type="button"
+              className={`dbml-table-node__title nodrag nopan${copiedName ? ' is-copied' : ''}`}
+              title={`${table.fullName} — tıkla, kopyala`}
+              aria-label={`${table.fullName} adını kopyala`}
+              onClick={copyTableName}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              {table.name}
+            </button>
             {table.note && (
               <span className="dbml-note-icon" tabIndex={0} aria-label="Tablo notu">
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
@@ -1699,6 +1723,12 @@ function DbmlErdViewerContent({
   });
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [rightSideWidth, setRightSideWidth] = useState(() => {
+    if (typeof window === 'undefined') return 280;
+    const saved = Number(window.localStorage.getItem('dbml-erd-right-width'));
+    if (Number.isFinite(saved)) return Math.min(560, Math.max(240, saved));
+    return 280;
+  });
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [hiddenTableIds, setHiddenTableIds] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<'schema' | 'tableGroup'>('schema');
@@ -1805,6 +1835,35 @@ function DbmlErdViewerContent({
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-edge-info', showEdgeInfo ? '1' : '0');
   }, [showEdgeInfo]);
+
+  useEffect(() => {
+    window.localStorage.setItem('dbml-erd-right-width', String(rightSideWidth));
+  }, [rightSideWidth]);
+
+  const startRightResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startWidth = rightSideWidth;
+
+      function onMove(moveEvent: PointerEvent) {
+        const next = startWidth + (startX - moveEvent.clientX);
+        setRightSideWidth(Math.min(560, Math.max(240, next)));
+      }
+
+      function onUp() {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        document.body.classList.remove('dbml-resizing-side');
+      }
+
+      document.body.classList.add('dbml-resizing-side');
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+    },
+    [rightSideWidth],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -2460,7 +2519,7 @@ function DbmlErdViewerContent({
       className={`dbml-erd-viewer ${leftOpen ? 'is-left-open' : ''} ${rightOpen ? 'is-right-open' : ''}${isEditingSource ? ' is-editing-source' : ''}${isFullscreen ? ' is-fullscreen' : ''} ${className}`.trim()}
       data-theme={theme}
       data-scheme={THEME_META[theme].scheme}
-      style={{ height }}
+      style={{ height, ['--right-side-width' as string]: `${rightSideWidth}px` }}
       aria-label={title}
     >
       <aside className={`dbml-side dbml-side--left${leftOpen ? ' is-open' : ''}`}>
@@ -2926,6 +2985,16 @@ function DbmlErdViewerContent({
       </div>
 
       <aside className={`dbml-side dbml-side--right${rightOpen ? ' is-open' : ''}`}>
+        {rightOpen && (
+          <div
+            className="dbml-side__resize-handle"
+            onPointerDown={startRightResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Sağ menü genişliğini ayarla"
+            title="Sürükleyerek genişlet"
+          />
+        )}
         <div className="dbml-side__header">
           <div>
             <div className="dbml-side__eyebrow">Gezgin</div>
