@@ -22,18 +22,28 @@ export type ServiceAccountCredentials = {
 function loadServiceAccount(): ServiceAccountCredentials {
   const filePath = optional('GOOGLE_SERVICE_ACCOUNT_FILE');
   if (filePath) {
-    const absolute = resolve(process.cwd(), filePath);
-    const raw = JSON.parse(readFileSync(absolute, 'utf8')) as {
-      client_email?: string;
-      private_key?: string;
-    };
-    if (!raw.client_email || !raw.private_key) {
-      throw new Error('Service account JSON içinde client_email ve private_key olmalı.');
+    try {
+      const absolute = resolve(process.cwd(), filePath);
+      const raw = JSON.parse(readFileSync(absolute, 'utf8')) as {
+        client_email?: string;
+        private_key?: string;
+      };
+      if (!raw.client_email || !raw.private_key) {
+        throw new Error('Service account JSON içinde client_email ve private_key olmalı.');
+      }
+      return {
+        client_email: raw.client_email,
+        private_key: raw.private_key,
+      };
+    } catch (error) {
+      // Production'da dosya yoksa EMAIL + PRIVATE_KEY'e düş.
+      const email = optional('GOOGLE_SERVICE_ACCOUNT_EMAIL');
+      const privateKey = optional('GOOGLE_PRIVATE_KEY').replace(/\\n/g, '\n');
+      if (email && privateKey) {
+        return { client_email: email, private_key: privateKey };
+      }
+      throw error;
     }
-    return {
-      client_email: raw.client_email,
-      private_key: raw.private_key,
-    };
   }
 
   const email = optional('GOOGLE_SERVICE_ACCOUNT_EMAIL');
