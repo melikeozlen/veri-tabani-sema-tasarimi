@@ -27,6 +27,7 @@ import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent } from 'react';
 import { isGoogleDriveConfigured, pickAndLoadGoogleDriveFile } from '../lib/googleDrive';
+import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersistence';
 
 // -----------------------------------------------------------------------------
 // DBML model types
@@ -1649,6 +1650,7 @@ function DbmlErdViewerContent({
   className = '',
 }: DbmlErdViewerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [sessionReady, setSessionReady] = useState(false);
   const [uploadedSources, setUploadedSources] = useState<DbmlSource[]>([]);
   const [sourceOverrides, setSourceOverrides] = useState<Record<string, string>>({});
   const [isEditingSource, setIsEditingSource] = useState(false);
@@ -1667,7 +1669,7 @@ function DbmlErdViewerContent({
   }, [sources, uploadedSources, sourceOverrides]);
 
   const [activeSourceId, setActiveSourceId] = useState(
-    () => initialSourceId ?? sources[0]?.id ?? uploadedSources[0]?.id ?? '',
+    () => initialSourceId ?? sources[0]?.id ?? '',
   );
   const activeSource = allSources.find((item) => item.id === activeSourceId) ?? allSources[0];
   const dbml = activeSource?.content ?? '';
@@ -1803,6 +1805,58 @@ function DbmlErdViewerContent({
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-edge-info', showEdgeInfo ? '1' : '0');
   }, [showEdgeInfo]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void loadPersistedSession()
+      .then((session) => {
+        if (cancelled) return;
+        setUploadedSources(session.uploadedSources);
+        setSourceOverrides(session.sourceOverrides);
+        if (session.activeSourceId) {
+          setActiveSourceId(session.activeSourceId);
+        } else if (!initialSourceId && session.uploadedSources[0]) {
+          setActiveSourceId(session.uploadedSources[0].id);
+        }
+        setSessionReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) setSessionReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialSourceId]);
+
+  useEffect(() => {
+    if (!sessionReady) return;
+
+    const persistable = uploadedSources.filter(
+      (item): item is DbmlSource & { kind: 'upload' | 'link' | 'drive' } =>
+        item.kind === 'upload' || item.kind === 'link' || item.kind === 'drive',
+    );
+
+    void savePersistedSession({
+      uploadedSources: persistable,
+      sourceOverrides,
+      activeSourceId,
+    }).catch(() => {
+      setLinkError('Yüklenen dosyalar tarayıcıya kaydedilemedi.');
+    });
+  }, [activeSourceId, sessionReady, sourceOverrides, uploadedSources]);
+
+  useEffect(() => {
+    if (!sessionReady) return;
+    if (allSources.length === 0) {
+      if (activeSourceId) setActiveSourceId('');
+      return;
+    }
+    if (!allSources.some((item) => item.id === activeSourceId)) {
+      setActiveSourceId(allSources[0].id);
+    }
+  }, [activeSourceId, allSources, sessionReady]);
 
   useEffect(() => {
     function onPointerMove(event: PointerEvent) {
@@ -2199,7 +2253,7 @@ function DbmlErdViewerContent({
     const reader = new FileReader();
     reader.onload = () => {
       const content = typeof reader.result === 'string' ? reader.result : '';
-      const id = `upload:${file.name}:${Date.now()}`;
+      const id = `upload:${file.name}`;
       const source: DbmlSource = {
         id,
         name: file.name,
@@ -2208,7 +2262,7 @@ function DbmlErdViewerContent({
         kind: 'upload',
       };
       setLinkError(null);
-      setUploadedSources((current) => [source, ...current]);
+      setUploadedSources((current) => [source, ...current.filter((item) => item.id !== id)]);
       setActiveSourceId(id);
     };
     reader.readAsText(file);
