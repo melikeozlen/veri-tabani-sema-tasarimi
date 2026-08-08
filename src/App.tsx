@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AdminPage } from './components/AdminPage';
 import { DbmlErdViewer, type DbmlSource } from './components/DbmlErdViewer';
 import { LanguageSwitcher } from './components/LanguageSwitcher';
@@ -31,6 +31,10 @@ function sourceDisplayName(fileName: string): string {
   return fileName.replace(/\.(dbml|txt)$/i, '');
 }
 
+const LOCAL_SOURCES: DbmlSource[] = Object.entries(dbmlModules)
+  .map(([path, content]) => toSource(path, content))
+  .sort((a, b) => a.name.localeCompare(b.name, 'en'));
+
 function AuthenticatedApp({
   token,
   username,
@@ -42,16 +46,8 @@ function AuthenticatedApp({
   isSuperAdmin: boolean;
   onLogout: () => Promise<void>;
 }) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const [view, setView] = useState<'erd' | 'admin'>('erd');
-
-  const localSources = useMemo(
-    () =>
-      Object.entries(dbmlModules)
-        .map(([path, content]) => toSource(path, content))
-        .sort((a, b) => a.name.localeCompare(b.name, locale)),
-    [locale],
-  );
 
   const [driveSources, setDriveSources] = useState<DbmlSource[]>([]);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
@@ -102,17 +98,30 @@ function AuthenticatedApp({
   }, [token, view]);
 
   const sources = useMemo(
-    () => [...driveSources, ...localSources],
-    [driveSources, localSources],
+    () => [...driveSources, ...LOCAL_SOURCES],
+    [driveSources],
   );
+
+  const handleBack = useCallback(() => setView('erd'), []);
+  const handleOpenAdmin = useCallback(() => setView('admin'), []);
+  const handleLogout = useCallback(() => {
+    void onLogout();
+  }, [onLogout]);
+  const handleDriveSourceUpdated = useCallback((sourceId: string, content: string) => {
+    setDriveSources((current) =>
+      current.map((source) =>
+        source.id === sourceId ? { ...source, content } : source,
+      ),
+    );
+  }, []);
 
   if (view === 'admin' && isSuperAdmin) {
     return (
       <AdminPage
         token={token}
         username={username}
-        onBack={() => setView('erd')}
-        onLogout={() => void onLogout()}
+        onBack={handleBack}
+        onLogout={handleLogout}
       />
     );
   }
@@ -127,15 +136,9 @@ function AuthenticatedApp({
       authToken={token}
       sourcesLoading={sourcesLoading}
       sourcesError={sourcesError}
-      onLogout={() => void onLogout()}
-      onOpenAdmin={isSuperAdmin ? () => setView('admin') : undefined}
-      onDriveSourceUpdated={(sourceId, content) => {
-        setDriveSources((current) =>
-          current.map((source) =>
-            source.id === sourceId ? { ...source, content } : source,
-          ),
-        );
-      }}
+      onLogout={handleLogout}
+      onOpenAdmin={isSuperAdmin ? handleOpenAdmin : undefined}
+      onDriveSourceUpdated={handleDriveSourceUpdated}
     />
   );
 }

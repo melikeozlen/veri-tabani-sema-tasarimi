@@ -552,15 +552,26 @@ function formatMessage(template: string, vars?: Record<string, string | number>)
   );
 }
 
+/** Canvas node/edge gibi context abonesi olmayan yerler için (re-render tetiklemez). */
+let activeLocale: Locale = typeof window === 'undefined' ? 'tr' : readStoredLocale();
+
+export function getMessage(key: MessageKey, vars?: Record<string, string | number>): string {
+  const table = messages[activeLocale] ?? messages.tr;
+  const value = table[key] ?? messages.tr[key] ?? key;
+  return formatMessage(value, vars);
+}
+
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => readStoredLocale());
 
   useEffect(() => {
+    activeLocale = locale;
     window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
     document.documentElement.lang = locale;
   }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {
+    activeLocale = next;
     setLocaleState(next);
   }, []);
 

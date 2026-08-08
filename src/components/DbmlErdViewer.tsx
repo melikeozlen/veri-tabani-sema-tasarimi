@@ -25,11 +25,11 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersistence';
 import { updateSourceContent } from '../lib/auth';
 import { LanguageSwitcher } from './LanguageSwitcher';
-import { useI18n, type MessageKey } from '../lib/i18n';
+import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
 import {
   applyThemeToDocument,
   isThemeId,
@@ -917,9 +917,10 @@ function buildSampleRows(table: DbmlTable, rowCount = 4): Array<Record<string, s
 }
 
 const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
-  const { t, locale } = useI18n();
   const { table, foreignKeyFields, dimmed, searchTerm, searchScopes, headerColor, onOpenTableData } = data;
-  const normalizedSearch = searchTerm.trim().toLocaleLowerCase(locale === 'en' ? 'en-US' : 'tr-TR');
+  const searchLocale =
+    typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'en-US' : 'tr-TR';
+  const normalizedSearch = searchTerm.trim().toLocaleLowerCase(searchLocale);
   const highlightColumns = normalizedSearch.length > 0 && searchScopes.includes('column');
   const [copiedName, setCopiedName] = useState(false);
   const copyResetRef = useRef<number | null>(null);
@@ -949,15 +950,15 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
             <button
               type="button"
               className={`dbml-table-node__title nodrag nopan${copiedName ? ' is-copied' : ''}`}
-              title={t('copy.tableClick', { name: table.fullName })}
-              aria-label={t('copy.nameAria', { name: table.fullName })}
+              title={getMessage('copy.tableClick', { name: table.fullName })}
+              aria-label={getMessage('copy.nameAria', { name: table.fullName })}
               onClick={copyTableName}
               onMouseDown={(event) => event.stopPropagation()}
             >
               {table.name}
             </button>
             {table.note && (
-              <span className="dbml-note-icon" tabIndex={0} aria-label={t('table.note')}>
+              <span className="dbml-note-icon" tabIndex={0} aria-label={getMessage('table.note')}>
                 <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
                   <path
                     fill="currentColor"
@@ -972,8 +973,8 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
             <button
               type="button"
               className="dbml-table-data-icon nodrag nopan"
-              aria-label={t('table.viewData')}
-              title={t('table.viewData')}
+              aria-label={getMessage('table.viewData')}
+              title={getMessage('table.viewData')}
               onClick={(event) => {
                 event.stopPropagation();
                 onOpenTableData?.(table.id);
@@ -1150,7 +1151,6 @@ const RelationEdge = memo(function RelationEdge({
   data,
   selected,
 }: EdgeProps<RelationFlowEdge>) {
-  const { t } = useI18n();
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX,
     sourceY,
@@ -1266,24 +1266,24 @@ const RelationEdge = memo(function RelationEdge({
             onPointerDown={keepPopupOpen}
           >
             <div className="dbml-relation-label__row">
-              <span className="dbml-relation-label__role">{t('relation.start')}</span>
+              <span className="dbml-relation-label__role">{getMessage('relation.start')}</span>
               <button
                 type="button"
                 className="dbml-relation-label__table"
                 onClick={(event) => focusTable(data.sourceTable, event)}
-                title={t('relation.goTable', { name: data.sourceTable })}
+                title={getMessage('relation.goTable', { name: data.sourceTable })}
               >
                 {data.sourceTable}
               </button>
               <span className="dbml-relation-label__field">.{data.sourceField}</span>
             </div>
             <div className="dbml-relation-label__row">
-              <span className="dbml-relation-label__role">{t('relation.end')}</span>
+              <span className="dbml-relation-label__role">{getMessage('relation.end')}</span>
               <button
                 type="button"
                 className="dbml-relation-label__table"
                 onClick={(event) => focusTable(data.targetTable, event)}
-                title={t('relation.goTable', { name: data.targetTable })}
+                title={getMessage('relation.goTable', { name: data.targetTable })}
               >
                 {data.targetTable}
               </button>
@@ -1768,6 +1768,8 @@ function DbmlErdViewerContent({
   onDriveSourceUpdated,
 }: DbmlErdViewerProps) {
   const { t, locale } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
   const resolvedTitle = title ?? t('app.defaultTitle');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sessionReady, setSessionReady] = useState(false);
@@ -2072,10 +2074,10 @@ function DbmlErdViewerContent({
     async function renderDbml() {
       try {
         setError(null);
-        if (!dbml.trim()) throw new Error(t('error.noSource'));
+        if (!dbml.trim()) throw new Error(tRef.current('error.noSource'));
 
         const parsed = parseDbml(dbml);
-        if (parsed.tables.length === 0) throw new Error(t('error.noTable'));
+        if (parsed.tables.length === 0) throw new Error(tRef.current('error.noTable'));
 
         const graph = await buildFlowGraph(parsed, layoutDensity);
         if (cancelled) return;
@@ -2096,7 +2098,7 @@ function DbmlErdViewerContent({
         }
       } catch (caughtError) {
         if (cancelled) return;
-        setError(caughtError instanceof Error ? caughtError.message : t('error.render'));
+        setError(caughtError instanceof Error ? caughtError.message : tRef.current('error.render'));
         setEnumCount(0);
         setTableGroups([]);
         setNodes([]);
@@ -2108,7 +2110,7 @@ function DbmlErdViewerContent({
     return () => {
       cancelled = true;
     };
-  }, [dbml, fitView, layoutDensity, setEdges, setNodes, t]);
+  }, [dbml, fitView, layoutDensity, setEdges, setNodes]);
 
   useEffect(() => {
     setSelectedTable(null);
@@ -2125,7 +2127,11 @@ function DbmlErdViewerContent({
     setDataModalTableId(null);
   }, [dbml]);
 
-  const normalizedSearch = searchTerm.trim().toLocaleLowerCase('tr-TR');
+  const deferredSearchTerm = useDeferredValue(searchTerm);
+  const deferredHoveredTableId = useDeferredValue(hoveredTableId);
+  const deferredHoveredEdgeId = useDeferredValue(hoveredEdgeId);
+  const searchLocale = locale === 'en' ? 'en-US' : 'tr-TR';
+  const normalizedSearch = deferredSearchTerm.trim().toLocaleLowerCase(searchLocale);
 
   const navigatorGroups = useMemo(() => {
     const tables = nodes.map((node) => node.data.table);
@@ -2143,10 +2149,10 @@ function DbmlErdViewerContent({
         const groupMatch =
           (groupBy === 'schema' &&
             searchScopes.includes('schema') &&
-            group.name.toLocaleLowerCase('tr-TR').includes(normalizedSearch)) ||
+            group.name.toLocaleLowerCase(searchLocale).includes(normalizedSearch)) ||
           (groupBy === 'tableGroup' &&
             searchScopes.includes('group') &&
-            group.name.toLocaleLowerCase('tr-TR').includes(normalizedSearch));
+            group.name.toLocaleLowerCase(searchLocale).includes(normalizedSearch));
         return {
           ...group,
           tables: groupMatch
@@ -2157,7 +2163,7 @@ function DbmlErdViewerContent({
         };
       })
       .filter((group) => group.tables.length > 0);
-  }, [groupBy, navigatorGroups, normalizedSearch, searchScopes]);
+  }, [groupBy, navigatorGroups, normalizedSearch, searchLocale, searchScopes]);
 
   const tableGroupNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -2182,20 +2188,20 @@ function DbmlErdViewerContent({
   }, [edges, selectedTable]);
 
   const hoverConnectedIds = useMemo(() => {
-    const focusEdgeId = pinnedEdgeId ?? hoveredEdgeId;
+    const focusEdgeId = pinnedEdgeId ?? deferredHoveredEdgeId;
     if (focusEdgeId) {
       const edge = edges.find((item) => item.id === focusEdgeId);
       if (edge) return new Set<string>([edge.source, edge.target]);
     }
 
-    if (!hoveredTableId) return new Set<string>();
-    const ids = new Set<string>([hoveredTableId]);
+    if (!deferredHoveredTableId) return new Set<string>();
+    const ids = new Set<string>([deferredHoveredTableId]);
     for (const edge of edges) {
-      if (edge.source === hoveredTableId) ids.add(edge.target);
-      if (edge.target === hoveredTableId) ids.add(edge.source);
+      if (edge.source === deferredHoveredTableId) ids.add(edge.target);
+      if (edge.target === deferredHoveredTableId) ids.add(edge.source);
     }
     return ids;
-  }, [edges, hoveredEdgeId, hoveredTableId, pinnedEdgeId]);
+  }, [edges, deferredHoveredEdgeId, deferredHoveredTableId, pinnedEdgeId]);
 
   const openTableData = useCallback((tableId: string) => {
     setDataModalTableId(tableId);
@@ -2211,6 +2217,8 @@ function DbmlErdViewerContent({
     return buildSampleRows(dataModalTable.table);
   }, [dataModalTable]);
 
+  const corporateTheme = isCorporateTheme(theme);
+
   const visibleNodes = useMemo(() => {
     return nodes.map((node) => {
       const searchMismatch =
@@ -2224,8 +2232,8 @@ function DbmlErdViewerContent({
         );
       const searchHit = normalizedSearch.length > 0 && !searchMismatch;
       const relationMismatch = selectedTable !== null && !connectedTableIds.has(node.id);
-      const hoverActive = hoveredTableId !== null || hoveredEdgeId !== null || pinnedEdgeId !== null;
-      // Filtre eşleşen tablolar hover ile soluklaşmasın; eşleşmeyenler CSS :hover ile renklensin.
+      const hoverActive =
+        deferredHoveredTableId !== null || deferredHoveredEdgeId !== null || pinnedEdgeId !== null;
       const hoverDim =
         hoverActive && !selectedTable && !hoverConnectedIds.has(node.id) && !searchHit;
       const isHidden = hiddenTableIds.has(node.id);
@@ -2236,29 +2244,29 @@ function DbmlErdViewerContent({
         data: {
           ...node.data,
           dimmed: searchMismatch || relationMismatch || hoverDim,
-          searchTerm,
+          searchTerm: deferredSearchTerm,
           searchScopes,
-          headerColor: headerColorForTable(node.data.table, groupBy, isCorporateTheme(theme)),
+          headerColor: headerColorForTable(node.data.table, groupBy, corporateTheme),
           onOpenTableData: openTableData,
         },
       };
     });
   }, [
     connectedTableIds,
+    corporateTheme,
+    deferredHoveredEdgeId,
+    deferredHoveredTableId,
+    deferredSearchTerm,
     groupBy,
     hiddenTableIds,
     hoverConnectedIds,
-    hoveredEdgeId,
-    hoveredTableId,
     nodes,
     normalizedSearch,
     openTableData,
     pinnedEdgeId,
     searchScopes,
-    searchTerm,
     selectedTable,
     tableGroupNameById,
-    theme,
   ]);
 
   function downloadSampleCsv() {
@@ -2319,18 +2327,24 @@ function DbmlErdViewerContent({
     [screenToFlowPosition],
   );
 
+  const dimmedNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const node of visibleNodes) {
+      if (node.data.dimmed) ids.add(node.id);
+    }
+    return ids;
+  }, [visibleNodes]);
+
   const visibleEdges = useMemo(() => {
     return edges.map((edge) => {
       const relationMismatch =
         selectedTable !== null && edge.source !== selectedTable && edge.target !== selectedTable;
-      const sourceNode = visibleNodes.find((node) => node.id === edge.source);
-      const targetNode = visibleNodes.find((node) => node.id === edge.target);
-      const searchDimmed = Boolean(sourceNode?.data.dimmed && targetNode?.data.dimmed);
+      const searchDimmed = dimmedNodeIds.has(edge.source) && dimmedNodeIds.has(edge.target);
       const highlighted =
         pinnedEdgeId === edge.id ||
-        hoveredEdgeId === edge.id ||
-        (hoveredTableId !== null &&
-          (edge.source === hoveredTableId || edge.target === hoveredTableId)) ||
+        deferredHoveredEdgeId === edge.id ||
+        (deferredHoveredTableId !== null &&
+          (edge.source === deferredHoveredTableId || edge.target === deferredHoveredTableId)) ||
         (selectedTable !== null &&
           (edge.source === selectedTable || edge.target === selectedTable));
       const infoVisible = pinnedEdgeId === edge.id;
@@ -2350,15 +2364,15 @@ function DbmlErdViewerContent({
       };
     });
   }, [
+    deferredHoveredEdgeId,
+    deferredHoveredTableId,
+    dimmedNodeIds,
     edges,
-    hoveredEdgeId,
-    hoveredTableId,
     pinnedEdgeId,
     pinnedEdgePointer,
     selectAndFocusTable,
     selectedTable,
     showEdgeInfo,
-    visibleNodes,
   ]);
 
   function focusSearchResult() {
@@ -2966,7 +2980,6 @@ function DbmlErdViewerContent({
             pinEdgeAtEvent(edge.id, event);
           }}
           onEdgeMouseEnter={(_event, edge) => hoverEdge(edge.id)}
-          onEdgeMouseMove={(_event, edge) => hoverEdge(edge.id)}
           onEdgeMouseLeave={() => scheduleHoverClear()}
           onPaneClick={() => {
             cancelHoverClear();

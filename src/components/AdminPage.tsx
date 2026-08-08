@@ -79,7 +79,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
     } finally {
       setLoading(false);
     }
-  }, [token, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dil değişiminde refetch yok
+  }, [token]);
 
   const reloadDriveFolders = useCallback(async () => {
     setDriveFoldersLoading(true);
@@ -91,7 +92,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
     } finally {
       setDriveFoldersLoading(false);
     }
-  }, [token, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dil değişiminde refetch yok
+  }, [token]);
 
   useEffect(() => {
     void reload();
