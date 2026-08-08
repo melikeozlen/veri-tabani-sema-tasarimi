@@ -1551,39 +1551,63 @@ function EyeIcon({ closed = false }: { closed?: boolean }) {
   );
 }
 
-function TrashIcon() {
+function MoreIcon() {
   return (
     <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path
-        d="M4.5 7h15M9.5 7V5.8A1.3 1.3 0 0 1 10.8 4.5h2.4a1.3 1.3 0 0 1 1.3 1.3V7M8 10v7.2M12 10v7.2M16 10v7.2M6.5 7l.7 12.1a1.5 1.5 0 0 0 1.5 1.4h6.6a1.5 1.5 0 0 0 1.5-1.4L17.5 7"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <circle cx="12" cy="5" r="1.8" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
+      <circle cx="12" cy="19" r="1.8" fill="currentColor" />
     </svg>
   );
 }
 
-function EditIcon() {
+function defaultSaveAsFileName(name: string): string {
+  const match = /^(.*?)(\.(dbml|txt))?$/i.exec(name.trim());
+  const base = (match?.[1] || name || 'schema').trim() || 'schema';
+  const ext = match?.[2] || '.dbml';
+  return `${base}-local${ext}`;
+}
+
+const BRAND_LOGO_CANDIDATES: Record<'light' | 'dark', string[]> = {
+  light: ['/brand/logo-light.svg', '/brand/logo-light.png', '/brand/logo-light.webp'],
+  dark: ['/brand/logo-dark.svg', '/brand/logo-dark.png', '/brand/logo-dark.webp'],
+};
+
+type BrandLogoScheme = 'light' | 'dark';
+
+function BrandLogoMark({
+  scheme,
+  label,
+  fallbackTitle,
+}: {
+  scheme: BrandLogoScheme;
+  label: string;
+  fallbackTitle: string;
+}) {
+  const candidates = BRAND_LOGO_CANDIDATES[scheme];
+  const [index, setIndex] = useState(0);
+
+  useEffect(() => {
+    setIndex(0);
+  }, [scheme]);
+
+  if (index >= candidates.length) {
+    return (
+      <div className="dbml-side__brand-title" aria-label={fallbackTitle}>
+        {fallbackTitle}
+      </div>
+    );
+  }
+
   return (
-    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-      <path
-        d="M4.5 16.7V19.5h2.8L17.7 9.1 15 6.4 4.5 16.7Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinejoin="round"
+    <div className="dbml-side__logo" aria-label={label}>
+      <img
+        key={`${scheme}:${candidates[index]}`}
+        src={candidates[index]}
+        alt=""
+        onError={() => setIndex((current) => current + 1)}
       />
-      <path
-        d="m14.3 5.7 2.7 2.7 1.5-1.5a1.1 1.1 0 0 0 0-1.6l-1.1-1.1a1.1 1.1 0 0 0-1.6 0l-1.5 1.5Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2.2"
-        strokeLinejoin="round"
-      />
-    </svg>
+    </div>
   );
 }
 
@@ -1783,6 +1807,18 @@ function DbmlErdViewerContent({
   const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
   const [saveLoading, setSaveLoading] = useState(false);
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
+  const [sourceMenuId, setSourceMenuId] = useState<string | null>(null);
+  const sourceMenuRef = useRef<HTMLDivElement | null>(null);
+  const [saveAsDialog, setSaveAsDialog] = useState<{
+    sourceId: string;
+    content: string;
+    fileName: string;
+  } | null>(null);
+  const saveAsInputRef = useRef<HTMLInputElement | null>(null);
+  const [deleteDialog, setDeleteDialog] = useState<{
+    sourceId: string;
+    name: string;
+  } | null>(null);
 
   const allSources = useMemo(() => {
     const merged = [...sources];
@@ -1847,6 +1883,7 @@ function DbmlErdViewerContent({
     if (isThemeId(saved)) return saved;
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'corp-dark' : 'corp-light';
   });
+  const brandScheme: BrandLogoScheme = THEME_META[theme].scheme;
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [viewLocked, setViewLocked] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -1965,6 +2002,40 @@ function DbmlErdViewerContent({
     },
     [rightSideWidth],
   );
+
+  useEffect(() => {
+    if (!saveAsDialog) return;
+    const id = window.setTimeout(() => {
+      saveAsInputRef.current?.focus();
+      saveAsInputRef.current?.select();
+    }, 0);
+    return () => window.clearTimeout(id);
+    // Yalnızca dialog açılışında focus/select — fileName her tuşta değişmesin
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sourceId açılışı temsil eder
+  }, [saveAsDialog?.sourceId]);
+
+  useEffect(() => {
+    if (!sourceMenuId) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const menu = sourceMenuRef.current;
+      const target = event.target;
+      // DOM Node, @xyflow Node ile çakışmasın diye Element üzerinden kontrol
+      if (menu && target instanceof Element && menu.contains(target as never)) return;
+      setSourceMenuId(null);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setSourceMenuId(null);
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [sourceMenuId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2611,6 +2682,22 @@ function DbmlErdViewerContent({
   function handleRemoveSource(sourceId: string) {
     const removable = uploadedSources.find((item) => item.id === sourceId);
     if (!removable) return;
+    setSourceMenuId(null);
+    setDeleteDialog({ sourceId: removable.id, name: removable.name });
+  }
+
+  function closeDeleteDialog() {
+    setDeleteDialog(null);
+  }
+
+  function confirmDeleteSource() {
+    if (!deleteDialog) return;
+    const sourceId = deleteDialog.sourceId;
+    const removable = uploadedSources.find((item) => item.id === sourceId);
+    if (!removable) {
+      setDeleteDialog(null);
+      return;
+    }
 
     const remainingUploads = uploadedSources.filter((item) => item.id !== sourceId);
     setUploadedSources(remainingUploads);
@@ -2621,6 +2708,8 @@ function DbmlErdViewerContent({
       return next;
     });
     setLinkError(null);
+    setSourceMenuId(null);
+    setDeleteDialog(null);
 
     if (editingSourceId === sourceId) {
       setIsEditingSource(false);
@@ -2635,6 +2724,62 @@ function DbmlErdViewerContent({
       remainingUploads[0] ??
       null;
     setActiveSourceId(nextSource?.id ?? '');
+  }
+
+  /** Drive kaynağını tarayıcıda yerel upload olarak saklar (SA dışı kalıcı düzenleme). */
+  function openSaveAsDialog(sourceId: string, contentOverride?: string) {
+    const source = allSources.find((item) => item.id === sourceId);
+    if (!source) return;
+
+    const content = contentOverride ?? source.content;
+    if (!content.trim()) {
+      setEditorNotice(t('editor.saveEmpty'));
+      return;
+    }
+
+    setSourceMenuId(null);
+    setSaveAsDialog({
+      sourceId,
+      content,
+      fileName: defaultSaveAsFileName(source.name),
+    });
+  }
+
+  function closeSaveAsDialog() {
+    setSaveAsDialog(null);
+  }
+
+  function confirmSaveAsDialog() {
+    if (!saveAsDialog) return;
+
+    let fileName = saveAsDialog.fileName.trim() || defaultSaveAsFileName('schema');
+    if (!/\.(dbml|txt)$/i.test(fileName)) {
+      fileName = `${fileName}.dbml`;
+    }
+
+    const id = `upload:local-${Date.now()}`;
+    const local: DbmlSource = {
+      id,
+      name: fileName,
+      label: t('sources.kind.localCopy'),
+      content: saveAsDialog.content,
+      kind: 'upload',
+    };
+
+    const sourceId = saveAsDialog.sourceId;
+    setUploadedSources((current) => [local, ...current.filter((item) => item.id !== id)]);
+    setActiveSourceId(id);
+    setSourceMenuId(null);
+    setLinkError(null);
+    setSaveAsDialog(null);
+
+    if (editingSourceId === sourceId) {
+      setIsEditingSource(false);
+      setEditingSourceId(null);
+      setDraftContent('');
+      setSaveLoading(false);
+      setEditorNotice(null);
+    }
   }
 
   function openSourceEditor(sourceId: string) {
@@ -2791,34 +2936,43 @@ function DbmlErdViewerContent({
       <aside className={`dbml-side dbml-side--left${leftOpen ? ' is-open' : ''}`}>
         <div className="dbml-side__header">
           <div className="dbml-side__header-main">
-            <div className="dbml-side__title-row">
-              <h2>
-                {isEditingSource
-                  ? editingSource?.name ?? 'DBML'
-                  : t('nav.files')}
-              </h2>
-              {!isEditingSource && <LanguageSwitcher className="lang-switch--side" />}
-            </div>
-            {userLabel && !isEditingSource && (
-              <div className="dbml-side__account">
-                <span className="dbml-side__account-name" title={userLabel}>
-                  {userLabel}
-                </span>
-                {isSuperAdmin && <span className="dbml-side__badge">{t('badge.admin')}</span>}
+            {isEditingSource ? (
+              <h2 className="dbml-side__editor-title">{editingSource?.name ?? 'DBML'}</h2>
+            ) : (
+              <div className="dbml-side__brand">
+                <BrandLogoMark
+                  scheme={brandScheme}
+                  label={t('brand.logoAria', {
+                    scheme: t(brandScheme === 'light' ? 'brand.scheme.light' : 'brand.scheme.dark'),
+                  })}
+                  fallbackTitle={t('brand.fallbackTitle')}
+                />
               </div>
             )}
           </div>
-          {isEditingSource ? (
-            <div className="dbml-side__header-actions">
-              <button type="button" className="dbml-icon-button" onClick={cancelSourceEditor} aria-label={t('editor.cancelEdit')} title={t('editor.cancel')}>
+          <div className="dbml-side__header-tools">
+            {!isEditingSource && <LanguageSwitcher className="lang-switch--side" />}
+            {isEditingSource ? (
+              <button
+                type="button"
+                className="dbml-icon-button"
+                onClick={cancelSourceEditor}
+                aria-label={t('editor.cancelEdit')}
+                title={t('editor.cancel')}
+              >
                 ×
               </button>
-            </div>
-          ) : (
-            <button type="button" className="dbml-icon-button" onClick={() => setLeftOpen(false)} aria-label={t('nav.closeLeft')}>
-              ←
-            </button>
-          )}
+            ) : (
+              <button
+                type="button"
+                className="dbml-icon-button"
+                onClick={() => setLeftOpen(false)}
+                aria-label={t('nav.closeLeft')}
+              >
+                ←
+              </button>
+            )}
+          </div>
         </div>
 
         <div className={`dbml-side__body${isEditingSource ? ' is-editor' : ''}`}>
@@ -2826,8 +2980,10 @@ function DbmlErdViewerContent({
             <>
               <div className="dbml-source-editor__toolbar">
                 <span className="dbml-source-editor__hint">
-                  {isSuperAdmin && editingSource?.kind === 'drive'
-                    ? t('editor.hintDrive')
+                  {editingSource?.kind === 'drive'
+                    ? isSuperAdmin
+                      ? t('editor.hintDrive')
+                      : t('editor.hintDriveLocal')
                     : t('editor.hint')}
                 </span>
                 <div className="dbml-source-editor__actions">
@@ -2847,15 +3003,41 @@ function DbmlErdViewerContent({
                   >
                     {t('editor.apply')}
                   </button>
-                  {isSuperAdmin && editingSource?.kind === 'drive' && (
+                  {editingSource?.kind === 'drive' && !isSuperAdmin && (
                     <button
                       type="button"
                       className="dbml-source-editor__button dbml-source-editor__button--primary"
-                      onClick={() => void saveSourceEditor()}
-                      disabled={saveLoading || !authToken}
+                      onClick={() => {
+                        if (!editingSourceId) return;
+                        openSaveAsDialog(editingSourceId, draftContent);
+                      }}
+                      disabled={saveLoading}
                     >
-                      {saveLoading ? t('editor.saving') : t('editor.save')}
+                      {t('editor.saveAs')}
                     </button>
+                  )}
+                  {isSuperAdmin && editingSource?.kind === 'drive' && (
+                    <>
+                      <button
+                        type="button"
+                        className="dbml-source-editor__button"
+                        onClick={() => {
+                          if (!editingSourceId) return;
+                          openSaveAsDialog(editingSourceId, draftContent);
+                        }}
+                        disabled={saveLoading}
+                      >
+                        {t('editor.saveAs')}
+                      </button>
+                      <button
+                        type="button"
+                        className="dbml-source-editor__button dbml-source-editor__button--primary"
+                        onClick={() => void saveSourceEditor()}
+                        disabled={saveLoading || !authToken}
+                      >
+                        {saveLoading ? t('editor.saving') : t('editor.save')}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -2963,12 +3145,20 @@ function DbmlErdViewerContent({
           <ul className="dbml-file-list">
             {allSources.map((source) => {
               const canRemove = source.kind === 'upload' || source.kind === 'link';
+              const canSaveAs = source.kind === 'drive';
+              const menuOpen = sourceMenuId === source.id;
               return (
-                <li key={source.id} className="dbml-file-list__row">
+                <li
+                  key={source.id}
+                  className={`dbml-file-list__row${source.id === activeSource?.id ? ' is-active' : ''}${menuOpen ? ' is-menu-open' : ''}`}
+                >
                   <button
                     type="button"
-                    className={`dbml-file-list__item${source.id === activeSource?.id ? ' is-active' : ''}`}
-                    onClick={() => setActiveSourceId(source.id)}
+                    className="dbml-file-list__item"
+                    onClick={() => {
+                      setSourceMenuId(null);
+                      setActiveSourceId(source.id);
+                    }}
                     title={source.url ?? source.name}
                   >
                     <span className="dbml-file-list__name">{source.name}</span>
@@ -2976,33 +3166,66 @@ function DbmlErdViewerContent({
                       {source.kind === 'link'
                         ? t('sources.kind.link')
                         : source.kind === 'upload'
-                          ? t('sources.kind.upload')
+                          ? source.id.startsWith('upload:local-')
+                            ? t('sources.kind.localCopy')
+                            : t('sources.kind.upload')
                           : source.kind === 'drive'
                             ? source.label || t('sources.kind.drive')
                             : source.label}
                       {sourceOverrides[source.id] ? ` · ${t('sources.edited')}` : ''}
                     </span>
                   </button>
-                  <div className="dbml-file-list__actions">
+                  <div
+                    className="dbml-file-list__actions"
+                    ref={menuOpen ? sourceMenuRef : undefined}
+                  >
                     <button
                       type="button"
-                      className="dbml-file-list__edit"
-                      onClick={() => openSourceEditor(source.id)}
-                      title={t('editor.editTitle')}
-                      aria-label={`${source.name} ${t('editor.editAria')}`}
+                      className={`dbml-file-list__more${menuOpen ? ' is-open' : ''}`}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setActiveSourceId(source.id);
+                        setSourceMenuId((current) => (current === source.id ? null : source.id));
+                      }}
+                      title={t('sources.menuAria')}
+                      aria-label={`${source.name} — ${t('sources.menuAria')}`}
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpen}
                     >
-                      <EditIcon />
+                      <MoreIcon />
                     </button>
-                    {canRemove && (
-                      <button
-                        type="button"
-                        className="dbml-file-list__delete"
-                        onClick={() => handleRemoveSource(source.id)}
-                        title={t('editor.deleteTitle')}
-                        aria-label={`${source.name} ${t('editor.deleteAria')}`}
-                      >
-                        <TrashIcon />
-                      </button>
+                    {menuOpen && (
+                      <div className="dbml-file-list__menu" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => {
+                            setSourceMenuId(null);
+                            openSourceEditor(source.id);
+                          }}
+                        >
+                          {t('editor.edit')}
+                        </button>
+                        {canSaveAs && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => openSaveAsDialog(source.id)}
+                          >
+                            {t('sources.saveAs')}
+                          </button>
+                        )}
+                        {canRemove && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            className="is-danger"
+                            onClick={() => handleRemoveSource(source.id)}
+                          >
+                            {t('sources.delete')}
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </li>
@@ -3036,17 +3259,31 @@ function DbmlErdViewerContent({
           )}
         </div>
 
-        {!isEditingSource && (onOpenAdmin || onLogout) && (
+        {!isEditingSource && (userLabel || onOpenAdmin || onLogout) && (
           <div className="dbml-side__dock">
-            {onOpenAdmin && (
-              <button type="button" className="dbml-side__dock-btn dbml-side__dock-btn--admin" onClick={onOpenAdmin}>
-                {t('nav.admin')}
-              </button>
+            {userLabel && (
+              <div className="dbml-side__account">
+                <span className="dbml-side__account-name" title={userLabel}>
+                  {userLabel}
+                </span>
+                <span className={`dbml-side__account-role${isSuperAdmin ? ' is-admin' : ''}`}>
+                  {isSuperAdmin ? t('admin.role.admin') : t('admin.role.user')}
+                </span>
+              </div>
             )}
-            {onLogout && (
-              <button type="button" className="dbml-side__dock-btn dbml-side__dock-btn--logout" onClick={onLogout}>
-                {t('nav.logout')}
-              </button>
+            {(onOpenAdmin || onLogout) && (
+              <div className="dbml-side__dock-actions">
+                {onOpenAdmin && (
+                  <button type="button" className="dbml-side__dock-btn dbml-side__dock-btn--admin" onClick={onOpenAdmin}>
+                    {t('nav.admin')}
+                  </button>
+                )}
+                {onLogout && (
+                  <button type="button" className="dbml-side__dock-btn dbml-side__dock-btn--logout" onClick={onLogout}>
+                    {t('nav.logout')}
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}
@@ -3577,6 +3814,85 @@ function DbmlErdViewerContent({
           </div>
         </div>
       </aside>
+
+      {deleteDialog && (
+        <div
+          className="dbml-prompt-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dbml-delete-title"
+          onClick={closeDeleteDialog}
+        >
+          <div className="dbml-prompt-modal__panel nodrag nopan" onClick={(event) => event.stopPropagation()}>
+            <h3 id="dbml-delete-title">{t('sources.confirmDeleteTitle')}</h3>
+            <p className="dbml-prompt-modal__hint">
+              {t('sources.confirmDelete', { name: deleteDialog.name })}
+            </p>
+            <div className="dbml-prompt-modal__actions">
+              <button type="button" className="dbml-prompt-modal__button" onClick={closeDeleteDialog}>
+                {t('editor.cancel')}
+              </button>
+              <button
+                type="button"
+                className="dbml-prompt-modal__button dbml-prompt-modal__button--danger"
+                onClick={confirmDeleteSource}
+              >
+                {t('sources.confirmDeleteAction')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {saveAsDialog && (
+        <div
+          className="dbml-prompt-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dbml-save-as-title"
+          onClick={closeSaveAsDialog}
+        >
+          <div className="dbml-prompt-modal__panel nodrag nopan" onClick={(event) => event.stopPropagation()}>
+            <h3 id="dbml-save-as-title">{t('sources.saveAsTitle')}</h3>
+            <p className="dbml-prompt-modal__hint">{t('sources.saveAsHint')}</p>
+            <label className="dbml-prompt-modal__field">
+              <span>{t('sources.saveAsPrompt')}</span>
+              <input
+                ref={saveAsInputRef}
+                value={saveAsDialog.fileName}
+                onChange={(event) =>
+                  setSaveAsDialog((current) =>
+                    current ? { ...current, fileName: event.target.value } : current,
+                  )
+                }
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    confirmSaveAsDialog();
+                  }
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeSaveAsDialog();
+                  }
+                }}
+              />
+            </label>
+            <div className="dbml-prompt-modal__actions">
+              <button type="button" className="dbml-prompt-modal__button" onClick={closeSaveAsDialog}>
+                {t('editor.cancel')}
+              </button>
+              <button
+                type="button"
+                className="dbml-prompt-modal__button dbml-prompt-modal__button--primary"
+                onClick={confirmSaveAsDialog}
+                disabled={!saveAsDialog.fileName.trim()}
+              >
+                {t('sources.saveAsConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {dataModalTable && (
         <div

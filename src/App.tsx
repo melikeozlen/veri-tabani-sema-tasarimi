@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AdminPage } from './components/AdminPage';
 import { DbmlErdViewer, type DbmlSource } from './components/DbmlErdViewer';
-import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { LoginPage } from './components/LoginPage';
 import './components/dbml-erd.css';
 import './components/login.css';
 import { fetchSourceContent, fetchSourceList } from './lib/auth';
 import { useI18n } from './lib/i18n';
-import { applyThemeToDocument, readStoredTheme, THEME_META } from './lib/theme';
+import { applyThemeToDocument, readStoredTheme } from './lib/theme';
 import { useAuth } from './lib/useAuth';
 
 const dbmlModules = import.meta.glob('./**/*.dbml', {
@@ -40,11 +39,15 @@ function AuthenticatedApp({
   username,
   isSuperAdmin,
   onLogout,
+  sessionNotice,
+  onDismissNotice,
 }: {
   token: string;
   username: string;
   isSuperAdmin: boolean;
   onLogout: () => Promise<void>;
+  sessionNotice?: string | null;
+  onDismissNotice?: () => void;
 }) {
   const { t } = useI18n();
   const [view, setView] = useState<'erd' | 'admin'>('erd');
@@ -127,25 +130,34 @@ function AuthenticatedApp({
   }
 
   return (
-    <DbmlErdViewer
-      sources={sources}
-      title={t('app.titleSuffix')}
-      height="100vh"
-      userLabel={username}
-      isSuperAdmin={isSuperAdmin}
-      authToken={token}
-      sourcesLoading={sourcesLoading}
-      sourcesError={sourcesError}
-      onLogout={handleLogout}
-      onOpenAdmin={isSuperAdmin ? handleOpenAdmin : undefined}
-      onDriveSourceUpdated={handleDriveSourceUpdated}
-    />
+    <>
+      {sessionNotice && (
+        <div className="app-session-notice" role="status">
+          <span>{t('app.sessionNetwork')}</span>
+          <button type="button" onClick={onDismissNotice}>
+            ×
+          </button>
+        </div>
+      )}
+      <DbmlErdViewer
+        sources={sources}
+        title={t('app.titleSuffix')}
+        height="100vh"
+        userLabel={username}
+        isSuperAdmin={isSuperAdmin}
+        authToken={token}
+        sourcesLoading={sourcesLoading}
+        sourcesError={sourcesError}
+        onLogout={handleLogout}
+        onOpenAdmin={isSuperAdmin ? handleOpenAdmin : undefined}
+        onDriveSourceUpdated={handleDriveSourceUpdated}
+      />
+    </>
   );
 }
 
 export default function App() {
   const auth = useAuth();
-  const { t } = useI18n();
   const theme = readStoredTheme();
 
   useEffect(() => {
@@ -154,24 +166,19 @@ export default function App() {
     }
   }, [auth.loading, auth.user, theme]);
 
+  // IndexedDB okunurken boş bırak — sunucu /me için bekleme ekranı yok
   if (auth.loading) {
-    return (
-      <div
-        className="login-page"
-        data-theme={theme}
-        data-scheme={THEME_META[theme].scheme}
-      >
-        <LanguageSwitcher className="lang-switch--login" />
-        <div className="login-card">
-          <p className="login-card__eyebrow">{t('brand.eyebrow')}</p>
-          <h1 className="login-card__title">{t('app.sessionCheck')}</h1>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   if (!auth.user || !auth.token) {
-    return <LoginPage onLogin={auth.login} />;
+    return (
+      <LoginPage
+        onLogin={auth.login}
+        initialError={auth.authError}
+        onClearInitialError={auth.clearAuthError}
+      />
+    );
   }
 
   return (
@@ -180,6 +187,8 @@ export default function App() {
       username={auth.user.username}
       isSuperAdmin={auth.user.isSuperAdmin}
       onLogout={auth.logout}
+      sessionNotice={auth.sessionNotice}
+      onDismissNotice={auth.clearSessionNotice}
     />
   );
 }

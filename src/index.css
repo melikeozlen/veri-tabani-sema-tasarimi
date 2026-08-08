@@ -49,3 +49,38 @@ body:has(.login-page[data-theme="split"]) {
 button, input { font: inherit; }
 
 .react-flow__attribution { display: none; }
+
+.app-session-notice {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(520px, calc(100vw - 24px));
+  transform: translateX(-50%);
+  padding: 10px 12px 10px 14px;
+  border: 1px solid #7a3a48;
+  border-radius: 8px;
+  background: #3d1f26;
+  color: #f0b4bc;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  font-size: 0.88rem;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.app-session-notice button {
+  flex-shrink: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.app-session-notice button:hover {
+  opacity: 1;
+}

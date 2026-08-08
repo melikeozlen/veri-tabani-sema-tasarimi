@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, type MessageKey } from '../lib/i18n';
 import {
@@ -32,6 +32,24 @@ type AdminPageProps = {
 };
 
 type TabId = 'users' | 'teams' | 'members' | 'folders' | 'permissions';
+
+type AdminDialog =
+  | {
+      mode: 'confirm';
+      title: string;
+      message: string;
+      confirmLabel: string;
+      onConfirm: () => void;
+    }
+  | {
+      mode: 'prompt';
+      title: string;
+      fieldLabel: string;
+      value: string;
+      inputType?: 'text' | 'password';
+      confirmLabel: string;
+      onConfirm: (value: string) => void;
+    };
 
 const TABS: { id: TabId; labelKey: MessageKey }[] = [
   { id: 'users', labelKey: 'admin.tab.users' },
@@ -74,6 +92,57 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
     granteeId: string;
   }>({ folderId: '', granteeType: 'user', granteeId: '' });
   const [tableSearch, setTableSearch] = useState('');
+  const [dialog, setDialog] = useState<AdminDialog | null>(null);
+  const dialogInputRef = useRef<HTMLInputElement | null>(null);
+  const [dialogSession, setDialogSession] = useState(0);
+
+  const closeDialog = useCallback(() => setDialog(null), []);
+
+  const openConfirm = useCallback(
+    (message: string, onConfirm: () => void, title?: string) => {
+      setDialogSession((current) => current + 1);
+      setDialog({
+        mode: 'confirm',
+        title: title ?? t('admin.dialog.confirmTitle'),
+        message,
+        confirmLabel: t('admin.delete'),
+        onConfirm,
+      });
+    },
+    [t],
+  );
+
+  const openPrompt = useCallback(
+    (options: {
+      title: string;
+      fieldLabel: string;
+      value: string;
+      inputType?: 'text' | 'password';
+      confirmLabel?: string;
+      onConfirm: (value: string) => void;
+    }) => {
+      setDialogSession((current) => current + 1);
+      setDialog({
+        mode: 'prompt',
+        title: options.title,
+        fieldLabel: options.fieldLabel,
+        value: options.value,
+        inputType: options.inputType,
+        confirmLabel: options.confirmLabel ?? t('admin.dialog.save'),
+        onConfirm: options.onConfirm,
+      });
+    },
+    [t],
+  );
+
+  useEffect(() => {
+    if (!dialog || dialog.mode !== 'prompt') return;
+    const id = window.setTimeout(() => {
+      dialogInputRef.current?.focus();
+      dialogInputRef.current?.select();
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [dialogSession, dialog?.mode]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -372,12 +441,19 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                             className="admin-btn admin-btn--small"
                             disabled={busy}
                             onClick={() => {
-                              const password = window.prompt(t('admin.promptPassword', { user: user.username }));
-                              if (!password) return;
-                              void run(
-                                () => updateAdminUser(token, user.username, { password }),
-                                t('admin.msg.passwordUpdated'),
-                              );
+                              openPrompt({
+                                title: t('admin.dialog.passwordTitle'),
+                                fieldLabel: t('admin.promptPassword', { user: user.username }),
+                                value: '',
+                                inputType: 'password',
+                                onConfirm: (password) => {
+                                  if (!password.trim()) return;
+                                  void run(
+                                    () => updateAdminUser(token, user.username, { password }),
+                                    t('admin.msg.passwordUpdated'),
+                                  );
+                                },
+                              });
                             }}
                           >
                             {t('admin.changePassword')}
@@ -418,8 +494,9 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                             className="admin-btn admin-btn--small admin-btn--danger"
                             disabled={busy}
                             onClick={() => {
-                              if (!window.confirm(t('admin.confirmDeleteUser', { user: user.username }))) return;
-                              void run(() => deleteAdminUser(token, user.username), t('admin.msg.userDeleted'));
+                              openConfirm(t('admin.confirmDeleteUser', { user: user.username }), () => {
+                                void run(() => deleteAdminUser(token, user.username), t('admin.msg.userDeleted'));
+                              });
                             }}
                           >
                             {t('admin.delete')}
@@ -481,12 +558,18 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                             className="admin-btn admin-btn--small"
                             disabled={busy}
                             onClick={() => {
-                              const teamName = window.prompt(t('admin.promptTeamName'), team.teamName);
-                              if (!teamName) return;
-                              void run(
-                                () => updateAdminTeam(token, team.teamId, { teamName }),
-                                t('admin.msg.teamUpdated'),
-                              );
+                              openPrompt({
+                                title: t('admin.dialog.renameTitle'),
+                                fieldLabel: t('admin.promptTeamName'),
+                                value: team.teamName,
+                                onConfirm: (teamName) => {
+                                  if (!teamName.trim()) return;
+                                  void run(
+                                    () => updateAdminTeam(token, team.teamId, { teamName }),
+                                    t('admin.msg.teamUpdated'),
+                                  );
+                                },
+                              });
                             }}
                           >
                             {t('admin.rename')}
@@ -496,8 +579,9 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                             className="admin-btn admin-btn--small admin-btn--danger"
                             disabled={busy}
                             onClick={() => {
-                              if (!window.confirm(t('admin.confirmDeleteTeam', { name: team.teamName }))) return;
-                              void run(() => deleteAdminTeam(token, team.teamId), t('admin.msg.teamDeleted'));
+                              openConfirm(t('admin.confirmDeleteTeam', { name: team.teamName }), () => {
+                                void run(() => deleteAdminTeam(token, team.teamId), t('admin.msg.teamDeleted'));
+                              });
                             }}
                           >
                             {t('admin.delete')}
@@ -692,12 +776,18 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                             className="admin-btn admin-btn--small"
                             disabled={busy}
                             onClick={() => {
-                              const label = window.prompt(t('admin.promptLabel'), folder.label);
-                              if (!label) return;
-                              void run(
-                                () => updateAdminFolder(token, folder.folderId, { label }),
-                                t('admin.msg.folderUpdated'),
-                              );
+                              openPrompt({
+                                title: t('admin.dialog.labelTitle'),
+                                fieldLabel: t('admin.promptLabel'),
+                                value: folder.label,
+                                onConfirm: (label) => {
+                                  if (!label.trim()) return;
+                                  void run(
+                                    () => updateAdminFolder(token, folder.folderId, { label }),
+                                    t('admin.msg.folderUpdated'),
+                                  );
+                                },
+                              });
                             }}
                           >
                             {t('admin.editLabel')}
@@ -707,8 +797,9 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                             className="admin-btn admin-btn--small admin-btn--danger"
                             disabled={busy}
                             onClick={() => {
-                              if (!window.confirm(t('admin.confirmDeleteFolder', { name: folder.label }))) return;
-                              void run(() => deleteAdminFolder(token, folder.folderId), t('admin.msg.folderDeleted'));
+                              openConfirm(t('admin.confirmDeleteFolder', { name: folder.label }), () => {
+                                void run(() => deleteAdminFolder(token, folder.folderId), t('admin.msg.folderDeleted'));
+                              });
                             }}
                           >
                             {t('admin.delete')}
@@ -820,18 +911,20 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                             type="button"
                             className="admin-btn admin-btn--small admin-btn--danger"
                             disabled={busy}
-                            onClick={() =>
-                              void run(
-                                () =>
-                                  deleteAdminPermission(
-                                    token,
-                                    permission.folderId,
-                                    permission.granteeType,
-                                    permission.granteeId,
-                                  ),
-                                t('admin.msg.permDeleted'),
-                              )
-                            }
+                            onClick={() => {
+                              openConfirm(t('admin.confirmDeletePerm'), () => {
+                                void run(
+                                  () =>
+                                    deleteAdminPermission(
+                                      token,
+                                      permission.folderId,
+                                      permission.granteeType,
+                                      permission.granteeId,
+                                    ),
+                                  t('admin.msg.permDeleted'),
+                                );
+                              });
+                            }}
                           >
                             {t('admin.delete')}
                           </button>
@@ -844,6 +937,86 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
               </div>
             </section>
           )}
+        </div>
+      )}
+
+      {dialog && (
+        <div
+          className="admin-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="admin-dialog-title"
+          onClick={closeDialog}
+        >
+          <div className="admin-dialog__panel" onClick={(event) => event.stopPropagation()}>
+            <h3 id="admin-dialog-title">{dialog.title}</h3>
+            {dialog.mode === 'confirm' ? (
+              <p className="admin-dialog__message">{dialog.message}</p>
+            ) : (
+              <label className="admin-dialog__field">
+                <span>{dialog.fieldLabel}</span>
+                <input
+                  ref={dialogInputRef}
+                  type={dialog.inputType ?? 'text'}
+                  value={dialog.value}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setDialog((current) =>
+                      current && current.mode === 'prompt' ? { ...current, value } : current,
+                    );
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      const value = dialog.value.trim();
+                      if (!value && dialog.inputType === 'password') return;
+                      if (!value && dialog.inputType !== 'password') return;
+                      const onConfirm = dialog.onConfirm;
+                      closeDialog();
+                      onConfirm(dialog.value);
+                    }
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      closeDialog();
+                    }
+                  }}
+                />
+              </label>
+            )}
+            <div className="admin-dialog__actions">
+              <button type="button" className="admin-btn admin-btn--ghost" onClick={closeDialog}>
+                {t('admin.cancel')}
+              </button>
+              {dialog.mode === 'confirm' ? (
+                <button
+                  type="button"
+                  className="admin-btn admin-btn--danger"
+                  onClick={() => {
+                    const onConfirm = dialog.onConfirm;
+                    closeDialog();
+                    onConfirm();
+                  }}
+                >
+                  {dialog.confirmLabel}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="admin-btn"
+                  disabled={!dialog.value.trim()}
+                  onClick={() => {
+                    const value = dialog.value.trim();
+                    if (!value) return;
+                    const onConfirm = dialog.onConfirm;
+                    closeDialog();
+                    onConfirm(dialog.value);
+                  }}
+                >
+                  {dialog.confirmLabel}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

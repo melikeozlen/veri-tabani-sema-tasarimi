@@ -58,6 +58,7 @@
   height: 28px;
   padding: 2px;
   transform: none;
+  flex-shrink: 0;
 }
 
 .lang-switch--side .lang-switch__btn {

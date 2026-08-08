@@ -4,11 +4,14 @@ DBML metnini React Flow üzerinde otomatik ELK yerleşimiyle salt-okunur ER diya
 
 Kimlik doğrulama Google Sheet üzerinden yapılır; yetkili Drive klasörlerindeki `.dbml` / `.txt` dosyaları sunucu (service account) ile okunur.
 
+> **Kendi Google Drive / Sheet entegrasyonunuzu kurmak için:**  
+> adım adım rehber → [`docs/KURULUM.md`](docs/KURULUM.md)
+
 ## Çalıştırma
 
 ```bash
 cp .env.example .env
-# .env ve secrets/service-account.json doldur
+# .env ve secrets/service-account.json doldur — detay: docs/KURULUM.md
 npm install
 npm run dev
 ```
@@ -17,7 +20,7 @@ npm run dev
 
 ## Google Sheet = DB
 
-Spreadsheet’te şu sayfalar olmalı (başlık satırı zorunlu):
+Spreadsheet’te şu sayfalar olmalı (başlık satırı zorunlu). Tam kurulum ve paylaşım adımları için [`docs/KURULUM.md`](docs/KURULUM.md).
 
 ### Kullanicilar
 
@@ -66,11 +69,13 @@ npm run hash-password -- "sifreniz"
 
 ## Google Cloud / Service Account
 
+Özet (detay: [`docs/KURULUM.md`](docs/KURULUM.md)):
+
 1. Google Cloud’da proje oluştur
 2. **Google Sheets API** ve **Google Drive API** etkinleştir
 3. Service account oluştur → JSON anahtar indir → `secrets/service-account.json`
 4. Sheet’i service account e-postasıyla **Düzenleyici** paylaş (yönetim ekranı yazdığı için Viewer yetmez)
-5. Drive klasörlerini aynı e-postayla **Görüntüleyici** paylaş
+5. Drive klasörlerini aynı e-postayla **Görüntüleyici** paylaş (Kaydet için **Düzenleyici**)
 6. `.env` içinde `GOOGLE_SHEET_ID` ve `SESSION_SECRET` doldur
 
 ```env

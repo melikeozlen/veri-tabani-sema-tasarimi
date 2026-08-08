@@ -12,23 +12,30 @@ import './login.css';
 
 type LoginPageProps = {
   onLogin: (username: string, password: string) => Promise<void>;
+  initialError?: string | null;
+  onClearInitialError?: () => void;
 };
 
-export function LoginPage({ onLogin }: LoginPageProps) {
+export function LoginPage({ onLogin, initialError = null, onClearInitialError }: LoginPageProps) {
   const { t } = useI18n();
   const [theme] = useState<ThemeId>(() => readStoredTheme());
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(initialError);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     applyThemeToDocument(theme);
   }, [theme]);
 
+  useEffect(() => {
+    if (initialError) setError(initialError);
+  }, [initialError]);
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    onClearInitialError?.();
     setSubmitting(true);
     try {
       await onLogin(username.trim(), password);
