@@ -12,7 +12,9 @@ import {
   Position,
   ReactFlow,
   ReactFlowProvider,
+  getNodesBounds,
   getSmoothStepPath,
+  getViewportForBounds,
   useEdgesState,
   useNodesState,
   useReactFlow,
@@ -23,6 +25,7 @@ import {
   type NodeProps,
   type XYPosition,
 } from '@xyflow/react';
+import { toPng } from 'html-to-image';
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
@@ -1850,12 +1853,13 @@ function DbmlErdViewerContent({
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
+  const [pngExporting, setPngExporting] = useState(false);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
   const hoverClearTimerRef = useRef<number | null>(null);
   const skipFitViewRef = useRef(false);
   const viewerRef = useRef<HTMLElement | null>(null);
-  const { fitView, fitBounds, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
+  const { fitView, fitBounds, getNodes, screenToFlowPosition } = useReactFlow<TableFlowNode, RelationFlowEdge>();
 
   const cancelHoverClear = useCallback(() => {
     if (hoverClearTimerRef.current === null) return;
@@ -2481,6 +2485,127 @@ function DbmlErdViewerContent({
     anchor.click();
     URL.revokeObjectURL(url);
     setLinkError(null);
+  }
+
+  async function handleExportPng() {
+    const currentNodes = getNodes().filter((node) => !node.hidden);
+    if (currentNodes.length === 0) {
+      setError(t('export.pngEmpty'));
+      return;
+    }
+
+    const rootEl = viewerRef.current;
+    const viewportEl = rootEl?.querySelector('.react-flow__viewport') as HTMLElement | null;
+    if (!rootEl || !viewportEl) {
+      setError(t('export.pngFailed'));
+      return;
+    }
+
+    setPngExporting(true);
+    setError(null);
+
+    const style = getComputedStyle(rootEl);
+    const bg = style.getPropertyValue('--dbml-bg').trim() || '#ffffff';
+    const edgeColor =
+      style.getPropertyValue('--dbml-edge-active').trim() ||
+      style.getPropertyValue('--dbml-edge').trim() ||
+      '#475569';
+
+    rootEl.classList.add('is-exporting-png');
+    rootEl.style.setProperty('--dbml-edge-export', edgeColor);
+
+    // html-to-image CSS var() stroke'ları kaçırabiliyor; inline stroke yaz.
+    const stroked = rootEl.querySelectorAll<SVGElement>(
+      '.dbml-relation-edge, .dbml-junction__stem, .dbml-junction__crow, .dbml-junction__one, .dbml-junction__node',
+    );
+    const previousStyles: Array<{ el: SVGElement; stroke: string; opacity: string; width: string }> = [];
+    stroked.forEach((el) => {
+      previousStyles.push({
+        el,
+        stroke: el.style.stroke,
+        opacity: el.style.opacity,
+        width: el.style.strokeWidth,
+      });
+      el.style.stroke = edgeColor;
+      el.style.opacity = '1';
+      el.style.strokeWidth = '2.4';
+    });
+
+    try {
+      // Bir frame bekle: class/style DOM'a yansısın
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+
+      // Ölçülmüş boyutları DOM'dan tamamla; eksik height üst/alt kesmeye yol açar.
+      const sizedNodes = currentNodes.map((node) => {
+        const measuredWidth = node.measured?.width ?? node.width;
+        const measuredHeight = node.measured?.height ?? node.height;
+        if (measuredWidth && measuredHeight) {
+          return { ...node, width: measuredWidth, height: measuredHeight };
+        }
+        const el = rootEl.querySelector(
+          `.react-flow__node[data-id="${CSS.escape(node.id)}"]`,
+        ) as HTMLElement | null;
+        return {
+          ...node,
+          width: measuredWidth ?? el?.offsetWidth ?? NODE_WIDTH,
+          height: measuredHeight ?? el?.offsetHeight ?? 120,
+        };
+      });
+
+      const rawBounds = getNodesBounds(sizedNodes);
+      // Junction / edge payı (üsten-alttan kesilmeyi önler)
+      const margin = 120;
+      const bounds = {
+        x: rawBounds.x - margin,
+        y: rawBounds.y - margin,
+        width: Math.max(rawBounds.width + margin * 2, 640),
+        height: Math.max(rawBounds.height + margin * 2, 480),
+      };
+
+      // Görüntü boyutu = şema oranı; padding bounds içinde
+      const maxSide = 8192;
+      const scale = Math.min(1, maxSide / bounds.width, maxSide / bounds.height);
+      const imageWidth = Math.max(1, Math.round(bounds.width * scale));
+      const imageHeight = Math.max(1, Math.round(bounds.height * scale));
+
+      // minZoom düşük tutulmalı: 0.5 büyük şemayı sığdıramayıp üst/altı keser.
+      // padding=0: margin zaten bounds'ta; relative padding ekstra crop riski yaratır.
+      const viewport = getViewportForBounds(bounds, imageWidth, imageHeight, 0.01, 4, 0);
+
+      const dataUrl = await toPng(viewportEl, {
+        backgroundColor: bg,
+        width: imageWidth,
+        height: imageHeight,
+        pixelRatio: scale < 1 ? 1 : 2,
+        cacheBust: true,
+        style: {
+          width: `${imageWidth}px`,
+          height: `${imageHeight}px`,
+          transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+          transformOrigin: '0 0',
+        },
+      });
+
+      const rawName = activeSource?.name?.replace(/\.(dbml|txt)$/i, '') || 'erd';
+      const fileName = `${rawName}.png`;
+      const anchor = document.createElement('a');
+      anchor.href = dataUrl;
+      anchor.download = fileName;
+      anchor.click();
+    } catch {
+      setError(t('export.pngFailed'));
+    } finally {
+      previousStyles.forEach(({ el, stroke, opacity, width }) => {
+        el.style.stroke = stroke;
+        el.style.opacity = opacity;
+        el.style.strokeWidth = width;
+      });
+      rootEl.classList.remove('is-exporting-png');
+      rootEl.style.removeProperty('--dbml-edge-export');
+      setPngExporting(false);
+    }
   }
 
   function handleRemoveSource(sourceId: string) {
@@ -3145,6 +3270,15 @@ function DbmlErdViewerContent({
               </button>
               <button type="button" className="dbml-toolbar__button" onClick={focusSearchResult}>
                 {t('toolbar.focusResult')}
+              </button>
+              <button
+                type="button"
+                className="dbml-toolbar__button dbml-toolbar__button--primary"
+                onClick={() => void handleExportPng()}
+                disabled={pngExporting || nodes.length === 0}
+                title={t('export.pngTitle')}
+              >
+                {pngExporting ? t('export.pngSaving') : t('export.png')}
               </button>
             </div>
           </Panel>

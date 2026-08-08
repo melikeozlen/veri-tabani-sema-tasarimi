@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, type MessageKey } from '../lib/i18n';
 import {
@@ -41,6 +41,12 @@ const TABS: { id: TabId; labelKey: MessageKey }[] = [
   { id: 'permissions', labelKey: 'admin.tab.permissions' },
 ];
 
+function matchesTableSearch(query: string, values: Array<string | number | boolean | null | undefined>) {
+  const normalized = query.trim().toLocaleLowerCase('tr-TR');
+  if (!normalized) return true;
+  return values.some((value) => String(value ?? '').toLocaleLowerCase('tr-TR').includes(normalized));
+}
+
 export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps) {
   const { t } = useI18n();
   const [theme] = useState<ThemeId>(() => readStoredTheme());
@@ -67,6 +73,7 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
     granteeType: 'user' | 'team';
     granteeId: string;
   }>({ folderId: '', granteeType: 'user', granteeId: '' });
+  const [tableSearch, setTableSearch] = useState('');
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -106,6 +113,65 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
   useEffect(() => {
     if (tab === 'folders') void reloadDriveFolders();
   }, [tab, reloadDriveFolders]);
+
+  useEffect(() => {
+    setTableSearch('');
+  }, [tab]);
+
+  const filteredUsers = useMemo(() => {
+    if (!snapshot) return [];
+    return snapshot.users.filter((user) =>
+      matchesTableSearch(tableSearch, [
+        user.username,
+        user.isSuperAdmin ? t('admin.role.admin') : t('admin.role.user'),
+        user.active ? t('admin.status.active') : t('admin.status.inactive'),
+        user.isSuperAdmin ? 'admin' : 'user',
+        user.active ? 'active' : 'inactive',
+      ]),
+    );
+  }, [snapshot, tableSearch, t]);
+
+  const filteredTeams = useMemo(() => {
+    if (!snapshot) return [];
+    return snapshot.teams.filter((team) =>
+      matchesTableSearch(tableSearch, [team.teamId, team.teamName]),
+    );
+  }, [snapshot, tableSearch]);
+
+  const filteredMembers = useMemo(() => {
+    if (!snapshot) return [];
+    const teamNameById = new Map(snapshot.teams.map((team) => [team.teamId, team.teamName]));
+    return snapshot.members.filter((member) =>
+      matchesTableSearch(tableSearch, [
+        member.teamId,
+        member.username,
+        teamNameById.get(member.teamId),
+      ]),
+    );
+  }, [snapshot, tableSearch]);
+
+  const filteredFolders = useMemo(() => {
+    if (!snapshot) return [];
+    return snapshot.folders.filter((folder) =>
+      matchesTableSearch(tableSearch, [folder.folderId, folder.label, folder.driveFolderId]),
+    );
+  }, [snapshot, tableSearch]);
+
+  const filteredPermissions = useMemo(() => {
+    if (!snapshot) return [];
+    const folderLabelById = new Map(snapshot.folders.map((folder) => [folder.folderId, folder.label]));
+    const teamNameById = new Map(snapshot.teams.map((team) => [team.teamId, team.teamName]));
+    return snapshot.permissions.filter((permission) =>
+      matchesTableSearch(tableSearch, [
+        permission.folderId,
+        folderLabelById.get(permission.folderId),
+        permission.granteeType,
+        permission.granteeId,
+        permission.granteeType === 'user' ? t('admin.type.user') : t('admin.type.team'),
+        permission.granteeType === 'team' ? teamNameById.get(permission.granteeId) : undefined,
+      ]),
+    );
+  }, [snapshot, tableSearch, t]);
 
   async function run(action: () => Promise<unknown>, successMessage: string) {
     setBusy(true);
@@ -210,6 +276,25 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
         <div className="admin-loading">{t('admin.loading')}</div>
       ) : (
         <div className="admin-body">
+          <div className="admin-table-search">
+            <input
+              type="search"
+              value={tableSearch}
+              onChange={(event) => setTableSearch(event.target.value)}
+              placeholder={t('admin.tableSearch')}
+              aria-label={t('admin.tableSearchAria')}
+            />
+            {tableSearch.trim() && (
+              <button
+                type="button"
+                className="admin-btn admin-btn--ghost admin-btn--small"
+                onClick={() => setTableSearch('')}
+              >
+                {t('admin.tableSearchClear')}
+              </button>
+            )}
+          </div>
+
           {tab === 'users' && (
             <section className="admin-panel">
               <form className="admin-form" onSubmit={(event) => void handleCreateUser(event)}>
@@ -269,7 +354,14 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                     </tr>
                   </thead>
                   <tbody>
-                    {snapshot.users.map((user) => (
+                    {filteredUsers.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="admin-table__empty">
+                          {t('admin.noMatches')}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredUsers.map((user) => (
                       <tr key={user.username}>
                         <td>{user.username}</td>
                         <td>{user.isSuperAdmin ? t('admin.role.admin') : t('admin.role.user')}</td>
@@ -334,7 +426,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -371,7 +464,14 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                     </tr>
                   </thead>
                   <tbody>
-                    {snapshot.teams.map((team) => (
+                    {filteredTeams.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="admin-table__empty">
+                          {t('admin.noMatches')}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredTeams.map((team) => (
                       <tr key={team.teamId}>
                         <td>{team.teamId}</td>
                         <td>{team.teamName}</td>
@@ -404,7 +504,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -462,7 +563,14 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                     </tr>
                   </thead>
                   <tbody>
-                    {snapshot.members.map((member) => (
+                    {filteredMembers.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="admin-table__empty">
+                          {t('admin.noMatches')}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredMembers.map((member) => (
                       <tr key={`${member.teamId}:${member.username}`}>
                         <td>{member.teamId}</td>
                         <td>{member.username}</td>
@@ -482,7 +590,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -565,7 +674,14 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                     </tr>
                   </thead>
                   <tbody>
-                    {snapshot.folders.map((folder) => (
+                    {filteredFolders.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="admin-table__empty">
+                          {t('admin.noMatches')}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredFolders.map((folder) => (
                       <tr key={folder.folderId}>
                         <td>{folder.folderId}</td>
                         <td>{folder.label}</td>
@@ -599,7 +715,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -684,7 +801,14 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                     </tr>
                   </thead>
                   <tbody>
-                    {snapshot.permissions.map((permission) => (
+                    {filteredPermissions.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="admin-table__empty">
+                          {t('admin.noMatches')}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredPermissions.map((permission) => (
                       <tr
                         key={`${permission.folderId}:${permission.granteeType}:${permission.granteeId}`}
                       >
@@ -713,7 +837,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                           </button>
                         </td>
                       </tr>
-                    ))}
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>

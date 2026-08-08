@@ -1830,6 +1830,53 @@ body.dbml-resizing-side * {
   opacity: 0.08;
 }
 
+/* PNG export: viewport clip olmasın, tam şema sığsın */
+.dbml-erd-viewer.is-exporting-png .react-flow__viewport,
+.dbml-erd-viewer.is-exporting-png .react-flow__edges,
+.dbml-erd-viewer.is-exporting-png .react-flow__edgelabel-renderer,
+.dbml-erd-viewer.is-exporting-png .react-flow__nodes {
+  overflow: visible !important;
+}
+
+/* PNG export: CSS var / opacity kaybını önle, bağlantıları net göster */
+.dbml-erd-viewer.is-exporting-png .dbml-relation-edge,
+.dbml-erd-viewer.is-exporting-png .dbml-relation-edge.is-dimmed,
+.dbml-erd-viewer.is-exporting-png .dbml-relation-edge.is-highlighted {
+  stroke: var(--dbml-edge-export, #475569) !important;
+  stroke-width: 2.4 !important;
+  opacity: 1 !important;
+}
+
+.dbml-erd-viewer.is-exporting-png .dbml-relation-edge__flow {
+  display: none !important;
+}
+
+.dbml-erd-viewer.is-exporting-png .dbml-junction,
+.dbml-erd-viewer.is-exporting-png .dbml-junction.is-dimmed {
+  opacity: 1 !important;
+}
+
+.dbml-erd-viewer.is-exporting-png .dbml-junction__stem,
+.dbml-erd-viewer.is-exporting-png .dbml-junction__crow,
+.dbml-erd-viewer.is-exporting-png .dbml-junction__one {
+  stroke: var(--dbml-edge-export, #475569) !important;
+  stroke-width: 2 !important;
+}
+
+.dbml-erd-viewer.is-exporting-png .dbml-junction__node {
+  stroke: var(--dbml-edge-export, #475569) !important;
+}
+
+.dbml-erd-viewer.is-exporting-png .dbml-junction__label {
+  color: var(--dbml-edge-export, #475569) !important;
+  opacity: 1 !important;
+}
+
+.dbml-erd-viewer.is-exporting-png .dbml-table-node.is-dimmed {
+  opacity: 1 !important;
+  filter: none !important;
+}
+
 .dbml-relation-edge__flow {
   stroke: color-mix(in srgb, var(--dbml-edge-active) 85%, #ffffff);
   stroke-width: 2.2;

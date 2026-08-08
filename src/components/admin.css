@@ -115,6 +115,40 @@
   color: var(--dbml-muted);
 }
 
+.admin-body {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-table-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+}
+
+.admin-table-search input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--dbml-border);
+  background: var(--dbml-surface-2);
+  color: var(--dbml-text);
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.admin-table-search input:focus {
+  outline: none;
+  border-color: var(--dbml-accent);
+}
+
+.admin-table__empty {
+  color: var(--dbml-muted);
+  font-style: italic;
+  text-align: center !important;
+  padding: 18px 8px !important;
+}
+
 .admin-panel {
   display: grid;
   gap: 16px;

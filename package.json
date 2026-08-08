@@ -21,6 +21,7 @@
     "elkjs": "latest",
     "googleapis": "^159.0.0",
     "hono": "^4.9.6",
+    "html-to-image": "1.11.11",
     "jose": "^6.0.12",
     "react": "latest",
     "react-dom": "latest",
@@ -29,10 +30,10 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^24.3.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "concurrently": "^9.2.1",
-    "typescript": "latest",
-    "@types/node": "^24.3.0"
+    "typescript": "latest"
   }
 }

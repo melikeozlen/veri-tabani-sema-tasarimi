@@ -105,6 +105,12 @@ const messages = {
     'sources.exportTitle': 'Aktif kaynağı .dbml olarak indir',
     'sources.linkAria': 'DBML veya TXT bağlantısı',
 
+    'export.png': 'PNG',
+    'export.pngTitle': 'Diyagramı PNG olarak indir',
+    'export.pngSaving': 'PNG…',
+    'export.pngEmpty': 'İndirilecek tablo yok.',
+    'export.pngFailed': 'PNG oluşturulamadı.',
+
     'editor.cancelEdit': 'Düzenlemeyi iptal et',
     'editor.textareaAria': 'DBML metin editörü',
 
@@ -269,6 +275,10 @@ const messages = {
     'admin.msg.folderDeleted': 'Klasör silindi.',
     'admin.msg.permDeleted': 'Yetki silindi.',
     'admin.driveFoldersFailed': 'Drive klasörleri alınamadı.',
+    'admin.tableSearch': 'Tabloda ara…',
+    'admin.tableSearchAria': 'Tablo hücrelerinde ara',
+    'admin.tableSearchClear': 'Aramayı temizle',
+    'admin.noMatches': 'Eşleşen kayıt yok.',
   },
   en: {
     'brand.eyebrow': 'ER',
@@ -361,6 +371,12 @@ const messages = {
     'sources.linkRequired': 'Paste a link.',
     'sources.exportTitle': 'Download the active source as .dbml',
     'sources.linkAria': 'DBML or TXT link',
+
+    'export.png': 'PNG',
+    'export.pngTitle': 'Download diagram as PNG',
+    'export.pngSaving': 'PNG…',
+    'export.pngEmpty': 'No tables to export.',
+    'export.pngFailed': 'Could not create PNG.',
 
     'editor.cancelEdit': 'Cancel editing',
     'editor.textareaAria': 'DBML text editor',
@@ -526,6 +542,10 @@ const messages = {
     'admin.msg.folderDeleted': 'Folder deleted.',
     'admin.msg.permDeleted': 'Permission deleted.',
     'admin.driveFoldersFailed': 'Could not load Drive folders.',
+    'admin.tableSearch': 'Search table…',
+    'admin.tableSearchAria': 'Search table cells',
+    'admin.tableSearchClear': 'Clear search',
+    'admin.noMatches': 'No matching rows.',
   },
 } as const;
 
