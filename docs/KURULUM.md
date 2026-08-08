@@ -1,4 +1,4 @@
-# Kurulum Rehberi — Kendi Google Drive / Sheet Entegrasyonu
+# Kurulum Rehberi — ER Diyagramı (Google Drive / Sheet)
 
 Bu uygulama **sizin** Google hesabınıza bağlanır. Başkasının Sheet/Drive’ını kullanmazsınız.
 
@@ -11,6 +11,10 @@ Akış:
 5. Uygulamayı çalıştırır / deploy edersiniz  
 
 Kod içinde Drive ID sabitlemeye gerek yoktur; her şey Sheet + `.env` ile yönetilir.
+
+### Firma logosu (opsiyonel)
+
+Yetkili diyagram klasörünün yanında bir `LOGO` klasörüne (ör. `ER/LOGO/logo-light.png`) veya klasör köküne koyun. `LOGO` klasörünü de service account ile paylaşın. Detay: `public/brand/README.md`.
 
 ---
 

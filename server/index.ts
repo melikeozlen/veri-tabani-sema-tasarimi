@@ -19,6 +19,7 @@ import {
 import { AuthError, authenticate, createSessionToken, resolveActiveUser, verifySessionToken } from './auth.js';
 import {
   getAllowedSourceContent,
+  getBrandLogoFile,
   listAccessibleDriveFolders,
   listAllowedSources,
   updateAllowedSourceContent,
@@ -160,6 +161,40 @@ app.get('/api/sources', async (c) => {
         error: publicError(error, 'read', 'Kaynak listesi alınamadı.'),
       },
       500,
+    );
+  }
+});
+
+app.get('/api/brand/logo/:scheme', async (c) => {
+  const denied = await requireAuth(c);
+  if (denied) return denied;
+
+  const scheme = c.req.param('scheme');
+  if (scheme !== 'light' && scheme !== 'dark') {
+    return c.json({ error: 'Geçersiz logo teması.' }, 400);
+  }
+
+  const folderIdRaw = c.req.query('folderId');
+  const preferredFolderId =
+    typeof folderIdRaw === 'string' && folderIdRaw.trim() ? folderIdRaw.trim() : undefined;
+
+  try {
+    const logo = await getBrandLogoFile(c.get('user'), scheme, preferredFolderId);
+    if (!logo) return c.body(null, 404);
+    return new Response(logo.data, {
+      status: 200,
+      headers: {
+        'Content-Type': logo.mimeType,
+        'Cache-Control': 'private, max-age=300',
+      },
+    });
+  } catch (error) {
+    console.error('[brand/logo]', error);
+    return c.json(
+      {
+        error: publicError(error, 'read', 'Logo okunamadı.'),
+      },
+      errorStatus(error),
     );
   }
 });

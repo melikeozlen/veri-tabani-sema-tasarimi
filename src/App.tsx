@@ -75,6 +75,7 @@ function AuthenticatedApp({
               label: `${full.folderLabel} · ${sourceDisplayName(full.name)}`,
               content: full.content,
               kind: 'drive',
+              folderId: full.folderId,
               url: `https://drive.google.com/file/d/${full.id}/view`,
             };
             return source;
@@ -141,7 +142,7 @@ function AuthenticatedApp({
       )}
       <DbmlErdViewer
         sources={sources}
-        title={t('app.titleSuffix')}
+        title={t('app.defaultTitle')}
         height="100vh"
         userLabel={username}
         isSuperAdmin={isSuperAdmin}

@@ -30,7 +30,12 @@ import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersistence';
-import { updateSourceContent } from '../lib/auth';
+import { fetchBrandLogo, updateSourceContent } from '../lib/auth';
+import {
+  blobToDataUrl,
+  readBrandLogoCache,
+  writeBrandLogoCache,
+} from '../lib/brandLogoCache';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
 import {
@@ -184,6 +189,8 @@ export interface DbmlSource {
   content: string;
   kind?: 'local' | 'upload' | 'link' | 'drive';
   url?: string;
+  /** Drive kaynağının Sheet klasör kodu (logo tercihi için) */
+  folderId?: string;
 }
 
 export interface DbmlErdViewerProps {
@@ -1579,19 +1586,79 @@ function BrandLogoMark({
   scheme,
   label,
   fallbackTitle,
+  authToken,
+  folderId,
 }: {
   scheme: BrandLogoScheme;
   label: string;
   fallbackTitle: string;
+  authToken?: string;
+  folderId?: string;
 }) {
-  const candidates = BRAND_LOGO_CANDIDATES[scheme];
-  const [index, setIndex] = useState(0);
+  const localCandidates = BRAND_LOGO_CANDIDATES[scheme];
+  const cached = typeof window !== 'undefined' ? readBrandLogoCache(scheme) : null;
+  const [src, setSrc] = useState<string | null>(() => cached);
+  const [mode, setMode] = useState<'loading' | 'image' | 'fallback'>(() =>
+    cached ? 'image' : 'loading',
+  );
+  const [localIndex, setLocalIndex] = useState(0);
+  const srcRef = useRef(src);
+  srcRef.current = src;
 
   useEffect(() => {
-    setIndex(0);
-  }, [scheme]);
+    let cancelled = false;
+    const locals = BRAND_LOGO_CANDIDATES[scheme];
+    const fromCache = readBrandLogoCache(scheme);
 
-  if (index >= candidates.length) {
+    // Yenisi gelene kadar cache / mevcut görseli tut — boş loading’e düşme
+    if (fromCache) {
+      setSrc(fromCache);
+      setMode('image');
+    }
+
+    async function load() {
+      if (authToken) {
+        try {
+          const blob = await fetchBrandLogo(authToken, scheme, folderId);
+          if (cancelled) return;
+          if (blob && blob.size > 0) {
+            const dataUrl = await blobToDataUrl(blob);
+            if (cancelled) return;
+            writeBrandLogoCache(scheme, dataUrl);
+            if (srcRef.current !== dataUrl) {
+              setSrc(dataUrl);
+            }
+            setMode('image');
+            return;
+          }
+        } catch {
+          // Ağ hatası: cache varsa olduğu gibi kalsın
+        }
+      }
+
+      if (cancelled) return;
+      if (srcRef.current?.startsWith('data:')) {
+        setMode('image');
+        return;
+      }
+
+      setLocalIndex(0);
+      if (locals[0]) {
+        setSrc(locals[0]);
+        setMode('image');
+      } else {
+        setSrc(null);
+        setMode('fallback');
+      }
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, folderId, scheme]);
+
+  if (mode === 'fallback' || (mode === 'image' && !src)) {
     return (
       <div className="dbml-side__brand-title" aria-label={fallbackTitle}>
         {fallbackTitle}
@@ -1599,13 +1666,36 @@ function BrandLogoMark({
     );
   }
 
+  if (mode === 'loading') {
+    return <div className="dbml-side__brand-title dbml-side__brand-title--pending" aria-hidden="true" />;
+  }
+
   return (
     <div className="dbml-side__logo" aria-label={label}>
       <img
-        key={`${scheme}:${candidates[index]}`}
-        src={candidates[index]}
+        src={src ?? undefined}
         alt=""
-        onError={() => setIndex((current) => current + 1)}
+        onError={() => {
+          if (src?.startsWith('data:')) {
+            const next = localCandidates[0];
+            if (next) {
+              setSrc(next);
+              setLocalIndex(0);
+              return;
+            }
+            setMode('fallback');
+            setSrc(null);
+            return;
+          }
+          const nextIndex = localIndex + 1;
+          if (nextIndex < localCandidates.length) {
+            setLocalIndex(nextIndex);
+            setSrc(localCandidates[nextIndex]);
+            return;
+          }
+          setMode('fallback');
+          setSrc(null);
+        }}
       />
     </div>
   );
@@ -2941,11 +3031,14 @@ function DbmlErdViewerContent({
             ) : (
               <div className="dbml-side__brand">
                 <BrandLogoMark
+                  key={brandScheme}
                   scheme={brandScheme}
                   label={t('brand.logoAria', {
                     scheme: t(brandScheme === 'light' ? 'brand.scheme.light' : 'brand.scheme.dark'),
                   })}
                   fallbackTitle={t('brand.fallbackTitle')}
+                  authToken={authToken}
+                  folderId={activeSource?.kind === 'drive' ? activeSource.folderId : undefined}
                 />
               </div>
             )}

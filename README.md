@@ -1,6 +1,6 @@
-# DBML ERD Viewer
+# ER Diyagramı
 
-DBML metnini React Flow üzerinde otomatik ELK yerleşimiyle salt-okunur ER diyagramı olarak gösterir.
+DBML metnini React Flow üzerinde otomatik ELK yerleşimiyle salt-okunur varlık-ilişki (ER) diyagramı olarak görüntüler. Amaç: veritabanı şemalarını görsel olarak incelemek ve paylaşmak.
 
 Kimlik doğrulama Google Sheet üzerinden yapılır; yetkili Drive klasörlerindeki `.dbml` / `.txt` dosyaları sunucu (service account) ile okunur.
 

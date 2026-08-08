@@ -309,7 +309,7 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
     >
       <header className="admin-header">
         <div>
-          <p className="admin-header__eyebrow">ER · {t('admin.eyebrow')}</p>
+          <p className="admin-header__eyebrow">{t('brand.eyebrow')} · {t('admin.eyebrow')}</p>
           <h1>{t('admin.title')}</h1>
           <p className="admin-header__meta">{username}</p>
         </div>

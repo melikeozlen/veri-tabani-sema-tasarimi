@@ -200,3 +200,26 @@ export async function updateSourceContent(
   );
   return data.source;
 }
+
+export async function fetchBrandLogo(
+  token: string,
+  scheme: 'light' | 'dark',
+  folderId?: string,
+): Promise<Blob | null> {
+  const base =
+    (typeof import.meta.env.VITE_API_BASE === 'string' && import.meta.env.VITE_API_BASE.trim()) ||
+    (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
+  const params = new URLSearchParams();
+  if (folderId) params.set('folderId', folderId);
+  const query = params.toString();
+  const url = `${base}/api/brand/logo/${scheme}${query ? `?${query}` : ''}`;
+
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(`Logo alınamadı (${response.status})`);
+  }
+  return response.blob();
+}
