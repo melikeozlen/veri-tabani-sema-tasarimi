@@ -18,22 +18,17 @@ type CacheEntry = {
 
 const readCache = new Map<string, CacheEntry>();
 const inflightReads = new Map<string, Promise<string[][]>>();
+const writeGeneration = new Map<string, number>();
 
 function cacheKey(range: string): string {
   return range.trim().toLowerCase();
 }
 
-function invalidateSheetCache(tab?: string) {
-  if (!tab) {
-    readCache.clear();
-    return;
-  }
-  const prefix = tab.trim().toLowerCase();
-  for (const key of readCache.keys()) {
-    if (key === prefix || key.startsWith(`${prefix}!`)) {
-      readCache.delete(key);
-    }
-  }
+function bumpWriteGeneration(tab: string): number {
+  const key = cacheKey(tab);
+  const next = (writeGeneration.get(key) ?? 0) + 1;
+  writeGeneration.set(key, next);
+  return next;
 }
 
 function normalizeHeader(value: string): string {
@@ -74,8 +69,15 @@ async function readSheet(range: string): Promise<string[][]> {
   const pending = inflightReads.get(key);
   if (pending) {
     const value = await pending;
+    // Yazma sırasında bekleyen okuma bitmiş olabilir; taze cache varsa onu kullan.
+    const afterWrite = readCache.get(key);
+    if (afterWrite && afterWrite.expiresAt > Date.now()) {
+      return afterWrite.value.map((row) => [...row]);
+    }
     return value.map((row) => [...row]);
   }
+
+  const generationAtStart = writeGeneration.get(key) ?? 0;
 
   const request = (async () => {
     const response = await sheets.spreadsheets.values.get({
@@ -88,16 +90,23 @@ async function readSheet(range: string): Promise<string[][]> {
         ? []
         : values.map((row) => row.map((cellValue) => String(cellValue ?? '')));
 
-    readCache.set(key, {
-      expiresAt: Date.now() + SHEET_READ_CACHE_TTL_MS,
-      value: normalized,
-    });
+    // Yazma araya girdiyse eski/boş okumayı cache'e yazma.
+    if ((writeGeneration.get(key) ?? 0) === generationAtStart) {
+      readCache.set(key, {
+        expiresAt: Date.now() + SHEET_READ_CACHE_TTL_MS,
+        value: normalized,
+      });
+    }
     return normalized;
   })();
 
   inflightReads.set(key, request);
   try {
     const value = await request;
+    const afterWrite = readCache.get(key);
+    if (afterWrite && afterWrite.expiresAt > Date.now()) {
+      return afterWrite.value.map((row) => [...row]);
+    }
     return value.map((row) => [...row]);
   } finally {
     inflightReads.delete(key);
@@ -105,17 +114,29 @@ async function readSheet(range: string): Promise<string[][]> {
 }
 
 async function writeSheet(tab: string, values: string[][]): Promise<void> {
-  await sheets.spreadsheets.values.clear({
-    spreadsheetId: env.sheetId,
-    range: tab,
-  });
+  const key = cacheKey(tab);
+  bumpWriteGeneration(tab);
+  // Eski in-flight okuma sonucu cache'i ezmesin.
+  inflightReads.delete(key);
+
+  // Önce yaz — tüm sayfayı boşaltmak satır kaybına yol açabiliyor.
   await sheets.spreadsheets.values.update({
     spreadsheetId: env.sheetId,
     range: `${tab}!A1`,
     valueInputOption: 'RAW',
     requestBody: { values },
   });
-  invalidateSheetCache(tab);
+
+  // Eski fazla satırları temizle (A{n+1}:Z)
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: env.sheetId,
+    range: `${tab}!A${values.length + 1}:Z`,
+  });
+
+  readCache.set(key, {
+    expiresAt: Date.now() + SHEET_READ_CACHE_TTL_MS,
+    value: values.map((row) => [...row]),
+  });
 }
 
 export async function loadUsers(): Promise<SheetUser[]> {

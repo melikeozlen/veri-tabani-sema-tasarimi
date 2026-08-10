@@ -47,6 +47,8 @@ type AdminDialog =
       fieldLabel: string;
       value: string;
       inputType?: 'text' | 'password';
+      /** Şifre diyalogunda tarayıcı autofill’in tablo aramasını doldurmasını engeller. */
+      usernameHint?: string;
       confirmLabel: string;
       onConfirm: (value: string) => void;
     };
@@ -118,6 +120,7 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
       fieldLabel: string;
       value: string;
       inputType?: 'text' | 'password';
+      usernameHint?: string;
       confirmLabel?: string;
       onConfirm: (value: string) => void;
     }) => {
@@ -128,6 +131,7 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
         fieldLabel: options.fieldLabel,
         value: options.value,
         inputType: options.inputType,
+        usernameHint: options.usernameHint,
         confirmLabel: options.confirmLabel ?? t('admin.dialog.save'),
         onConfirm: options.onConfirm,
       });
@@ -144,8 +148,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
     return () => window.clearTimeout(id);
   }, [dialogSession, dialog?.mode]);
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  const reload = useCallback(async (options?: { soft?: boolean }) => {
+    if (!options?.soft) setLoading(true);
     setError(null);
     try {
       const data = await fetchAdminSnapshot(token);
@@ -249,7 +253,8 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
     try {
       await action();
       setNotice(successMessage);
-      await reload();
+      // Mevcut tabloyu silmeden yenile — şifre sonrası satır kaybolmasın.
+      await reload({ soft: true });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t('admin.failed'));
     } finally {
@@ -348,6 +353,12 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
           <div className="admin-table-search">
             <input
               type="search"
+              name="admin-table-search"
+              autoComplete="off"
+              data-1p-ignore
+              data-lpignore="true"
+              data-form-type="other"
+              readOnly={Boolean(dialog)}
               value={tableSearch}
               onChange={(event) => setTableSearch(event.target.value)}
               placeholder={t('admin.tableSearch')}
@@ -366,12 +377,20 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
 
           {tab === 'users' && (
             <section className="admin-panel">
-              <form className="admin-form" onSubmit={(event) => void handleCreateUser(event)}>
+              <form
+                className="admin-form"
+                autoComplete="off"
+                onSubmit={(event) => void handleCreateUser(event)}
+              >
                 <h2>{t('admin.newUser')}</h2>
                 <div className="admin-form__grid">
                   <label>
                     {t('admin.username')}
                     <input
+                      name="new-admin-username"
+                      autoComplete="off"
+                      data-1p-ignore
+                      data-lpignore="true"
                       value={userForm.username}
                       onChange={(event) => setUserForm((current) => ({ ...current, username: event.target.value }))}
                       required
@@ -381,6 +400,10 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                     {t('admin.password')}
                     <input
                       type="password"
+                      name="new-admin-password"
+                      autoComplete="new-password"
+                      data-1p-ignore
+                      data-lpignore="true"
                       value={userForm.password}
                       onChange={(event) => setUserForm((current) => ({ ...current, password: event.target.value }))}
                       required
@@ -446,6 +469,7 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
                                 fieldLabel: t('admin.promptPassword', { user: user.username }),
                                 value: '',
                                 inputType: 'password',
+                                usernameHint: user.username,
                                 onConfirm: (password) => {
                                   if (!password.trim()) return;
                                   void run(
@@ -953,35 +977,56 @@ export function AdminPage({ token, username, onBack, onLogout }: AdminPageProps)
             {dialog.mode === 'confirm' ? (
               <p className="admin-dialog__message">{dialog.message}</p>
             ) : (
-              <label className="admin-dialog__field">
-                <span>{dialog.fieldLabel}</span>
-                <input
-                  ref={dialogInputRef}
-                  type={dialog.inputType ?? 'text'}
-                  value={dialog.value}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setDialog((current) =>
-                      current && current.mode === 'prompt' ? { ...current, value } : current,
-                    );
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault();
-                      const value = dialog.value.trim();
-                      if (!value && dialog.inputType === 'password') return;
-                      if (!value && dialog.inputType !== 'password') return;
-                      const onConfirm = dialog.onConfirm;
-                      closeDialog();
-                      onConfirm(dialog.value);
-                    }
-                    if (event.key === 'Escape') {
-                      event.preventDefault();
-                      closeDialog();
-                    }
-                  }}
-                />
-              </label>
+              <form
+                className="admin-dialog__prompt"
+                autoComplete="off"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const value = dialog.value.trim();
+                  if (!value) return;
+                  const onConfirm = dialog.onConfirm;
+                  closeDialog();
+                  onConfirm(dialog.value);
+                }}
+              >
+                {/* Tarayıcı şifre yöneticisinin tablo aramasını username sanmasını engeller. */}
+                {dialog.inputType === 'password' && (
+                  <input
+                    type="text"
+                    name="username"
+                    autoComplete="username"
+                    value={dialog.usernameHint ?? ''}
+                    readOnly
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    className="admin-dialog__autofill-anchor"
+                  />
+                )}
+                <label className="admin-dialog__field">
+                  <span>{dialog.fieldLabel}</span>
+                  <input
+                    ref={dialogInputRef}
+                    type={dialog.inputType ?? 'text'}
+                    name={dialog.inputType === 'password' ? 'new-password' : 'prompt-value'}
+                    autoComplete={dialog.inputType === 'password' ? 'new-password' : 'off'}
+                    data-1p-ignore
+                    data-lpignore="true"
+                    value={dialog.value}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setDialog((current) =>
+                        current && current.mode === 'prompt' ? { ...current, value } : current,
+                      );
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault();
+                        closeDialog();
+                      }
+                    }}
+                  />
+                </label>
+              </form>
             )}
             <div className="admin-dialog__actions">
               <button type="button" className="admin-btn admin-btn--ghost" onClick={closeDialog}>
