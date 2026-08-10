@@ -177,6 +177,13 @@ interface RelationEdgeData extends Record<string, unknown> {
   infoVisible?: boolean;
   infoPointer?: XYPosition | null;
   showEdgeInfo?: boolean;
+  stackedEdges?: Array<{
+    id: string;
+    sourceTable: string;
+    targetTable: string;
+    sourceField: string;
+    targetField: string;
+  }>;
   onFocusTable?: (tableId: string) => void;
 }
 
@@ -1249,6 +1256,44 @@ function clampEdgeInfoAboveCursor(
 
 const EDGE_INFO_GAP = 12;
 
+function collectEdgeIdsAtPoint(
+  clientX: number,
+  clientY: number,
+  clickedId: string,
+  edges: RelationFlowEdge[],
+): string[] {
+  const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (id: string) => {
+    if (seen.has(id) || !edgeById.has(id)) return;
+    seen.add(id);
+    ordered.push(id);
+  };
+
+  add(clickedId);
+
+  for (const el of document.elementsFromPoint(clientX, clientY)) {
+    if (!(el instanceof Element)) continue;
+    const edgeEl = el.closest('.react-flow__edge');
+    if (!edgeEl) continue;
+    const id = edgeEl.getAttribute('data-id');
+    if (id) add(id);
+  }
+
+  const pairKeys = new Set<string>();
+  for (const id of ordered) {
+    const edge = edgeById.get(id);
+    if (edge) pairKeys.add(`${edge.source}=>${edge.target}`);
+  }
+  for (const edge of edges) {
+    if (pairKeys.has(`${edge.source}=>${edge.target}`)) add(edge.id);
+  }
+
+  return ordered;
+}
+
 const RelationEdge = memo(function RelationEdge({
   id,
   sourceX,
@@ -1277,6 +1322,20 @@ const RelationEdge = memo(function RelationEdge({
   const showInfo = Boolean(data) && data?.showEdgeInfo !== false && Boolean(data?.infoVisible);
   const sourceCardinality = data?.sourceCardinality ?? '1';
   const targetCardinality = data?.targetCardinality ?? 'N';
+  const stackedEdges =
+    data?.stackedEdges && data.stackedEdges.length > 0
+      ? data.stackedEdges
+      : data
+        ? [
+            {
+              id,
+              sourceTable: data.sourceTable,
+              targetTable: data.targetTable,
+              sourceField: data.sourceField,
+              targetField: data.targetField,
+            },
+          ]
+        : [];
   const { flowToScreenPosition, screenToFlowPosition } = useReactFlow();
   const viewport = useViewport();
   const labelRef = useRef<HTMLDivElement>(null);
@@ -1311,6 +1370,7 @@ const RelationEdge = memo(function RelationEdge({
     preferred.y,
     screenToFlowPosition,
     showInfo,
+    stackedEdges.length,
     viewport.x,
     viewport.y,
     viewport.zoom,
@@ -1368,36 +1428,45 @@ const RelationEdge = memo(function RelationEdge({
         {showInfo && data && (
           <div
             ref={labelRef}
-            className="dbml-relation-label nodrag nopan"
+            className={`dbml-relation-label nodrag nopan${stackedEdges.length > 1 ? ' has-stack' : ''}`}
             style={{ transform: infoTransform }}
             onClick={keepPopupOpen}
             onMouseDown={keepPopupOpen}
             onPointerDown={keepPopupOpen}
           >
-            <div className="dbml-relation-label__row">
-              <span className="dbml-relation-label__role">{getMessage('relation.start')}</span>
-              <button
-                type="button"
-                className="dbml-relation-label__table"
-                onClick={(event) => focusTable(data.sourceTable, event)}
-                title={getMessage('relation.goTable', { name: data.sourceTable })}
-              >
-                {data.sourceTable}
-              </button>
-              <span className="dbml-relation-label__field">.{data.sourceField}</span>
-            </div>
-            <div className="dbml-relation-label__row">
-              <span className="dbml-relation-label__role">{getMessage('relation.end')}</span>
-              <button
-                type="button"
-                className="dbml-relation-label__table"
-                onClick={(event) => focusTable(data.targetTable, event)}
-                title={getMessage('relation.goTable', { name: data.targetTable })}
-              >
-                {data.targetTable}
-              </button>
-              <span className="dbml-relation-label__field">.{data.targetField}</span>
-            </div>
+            {stackedEdges.length > 1 && (
+              <div className="dbml-relation-label__stack-title">
+                {getMessage('relation.stackedCount', { count: stackedEdges.length })}
+              </div>
+            )}
+            {stackedEdges.map((item) => (
+              <div key={item.id} className="dbml-relation-label__block">
+                <div className="dbml-relation-label__row">
+                  <span className="dbml-relation-label__role">{getMessage('relation.start')}</span>
+                  <button
+                    type="button"
+                    className="dbml-relation-label__table"
+                    onClick={(event) => focusTable(item.sourceTable, event)}
+                    title={getMessage('relation.goTable', { name: item.sourceTable })}
+                  >
+                    {item.sourceTable}
+                  </button>
+                  <span className="dbml-relation-label__field">.{item.sourceField}</span>
+                </div>
+                <div className="dbml-relation-label__row">
+                  <span className="dbml-relation-label__role">{getMessage('relation.end')}</span>
+                  <button
+                    type="button"
+                    className="dbml-relation-label__table"
+                    onClick={(event) => focusTable(item.targetTable, event)}
+                    title={getMessage('relation.goTable', { name: item.targetTable })}
+                  >
+                    {item.targetTable}
+                  </button>
+                  <span className="dbml-relation-label__field">.{item.targetField}</span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </EdgeLabelRenderer>
@@ -2044,6 +2113,7 @@ function DbmlErdViewerContent({
   const [hoveredTableId, setHoveredTableId] = useState<string | null>(null);
   const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   const [pinnedEdgeId, setPinnedEdgeId] = useState<string | null>(null);
+  const [pinnedStackIds, setPinnedStackIds] = useState<string[]>([]);
   const [pinnedEdgePointer, setPinnedEdgePointer] = useState<XYPosition | null>(null);
   const [layoutDensity, setLayoutDensity] = useState<LayoutDensity>(() => {
     if (typeof window === 'undefined') return 'normal';
@@ -2421,6 +2491,7 @@ function DbmlErdViewerContent({
     setHoveredTableId(null);
     setHoveredEdgeId(null);
     setPinnedEdgeId(null);
+    setPinnedStackIds([]);
     setPinnedEdgePointer(null);
     setSearchTerm('');
     setSearchScopeFilter('all');
@@ -2492,6 +2563,17 @@ function DbmlErdViewerContent({
   }, [edges, selectedTable]);
 
   const hoverConnectedIds = useMemo(() => {
+    if (pinnedStackIds.length > 0) {
+      const ids = new Set<string>();
+      for (const edgeId of pinnedStackIds) {
+        const edge = edges.find((item) => item.id === edgeId);
+        if (!edge) continue;
+        ids.add(edge.source);
+        ids.add(edge.target);
+      }
+      if (ids.size > 0) return ids;
+    }
+
     const focusEdgeId = pinnedEdgeId ?? deferredHoveredEdgeId;
     if (focusEdgeId) {
       const edge = edges.find((item) => item.id === focusEdgeId);
@@ -2505,7 +2587,7 @@ function DbmlErdViewerContent({
       if (edge.target === deferredHoveredTableId) ids.add(edge.source);
     }
     return ids;
-  }, [edges, deferredHoveredEdgeId, deferredHoveredTableId, pinnedEdgeId]);
+  }, [edges, deferredHoveredEdgeId, deferredHoveredTableId, pinnedEdgeId, pinnedStackIds]);
 
   const openTableData = useCallback((tableId: string) => {
     setDataModalTableId(tableId);
@@ -2612,6 +2694,7 @@ function DbmlErdViewerContent({
       setSelectedTable(tableId);
       setHoveredEdgeId(null);
       setPinnedEdgeId(null);
+      setPinnedStackIds([]);
       setPinnedEdgePointer(null);
       focusTables([tableId]);
     },
@@ -2620,15 +2703,18 @@ function DbmlErdViewerContent({
 
   const clearPinnedEdge = useCallback(() => {
     setPinnedEdgeId(null);
+    setPinnedStackIds([]);
     setPinnedEdgePointer(null);
   }, []);
 
   const pinEdgeAtEvent = useCallback(
     (edgeId: string, event: { clientX: number; clientY: number }) => {
+      const stackIds = collectEdgeIdsAtPoint(event.clientX, event.clientY, edgeId, edges);
       setPinnedEdgeId(edgeId);
+      setPinnedStackIds(stackIds);
       setPinnedEdgePointer(screenToFlowPosition({ x: event.clientX, y: event.clientY }));
     },
-    [screenToFlowPosition],
+    [edges, screenToFlowPosition],
   );
 
   const dimmedNodeIds = useMemo(() => {
@@ -2640,11 +2726,27 @@ function DbmlErdViewerContent({
   }, [visibleNodes]);
 
   const visibleEdges = useMemo(() => {
+    const pinnedStack = new Set(pinnedStackIds);
+    const stackedEdges =
+      pinnedStackIds.length > 1
+        ? pinnedStackIds
+            .map((stackId) => edges.find((edge) => edge.id === stackId))
+            .filter((edge): edge is RelationFlowEdge => Boolean(edge))
+            .map((edge) => ({
+              id: edge.id,
+              sourceTable: edge.data!.sourceTable,
+              targetTable: edge.data!.targetTable,
+              sourceField: edge.data!.sourceField,
+              targetField: edge.data!.targetField,
+            }))
+        : undefined;
+
     return edges.map((edge) => {
       const relationMismatch =
         selectedTable !== null && edge.source !== selectedTable && edge.target !== selectedTable;
       const searchDimmed = dimmedNodeIds.has(edge.source) && dimmedNodeIds.has(edge.target);
       const highlighted =
+        pinnedStack.has(edge.id) ||
         pinnedEdgeId === edge.id ||
         deferredHoveredEdgeId === edge.id ||
         (deferredHoveredTableId !== null &&
@@ -2663,6 +2765,7 @@ function DbmlErdViewerContent({
           infoVisible,
           infoPointer: infoVisible ? pinnedEdgePointer : null,
           showEdgeInfo,
+          stackedEdges: infoVisible ? stackedEdges : undefined,
           onFocusTable: selectAndFocusTable,
         },
       };
@@ -2674,6 +2777,7 @@ function DbmlErdViewerContent({
     edges,
     pinnedEdgeId,
     pinnedEdgePointer,
+    pinnedStackIds,
     selectAndFocusTable,
     selectedTable,
     showEdgeInfo,

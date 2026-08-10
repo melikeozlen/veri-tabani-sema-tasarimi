@@ -2178,6 +2178,34 @@ body.dbml-resizing-side * {
   gap: 8px;
 }
 
+.dbml-relation-label.has-stack {
+  min-width: 260px;
+  max-width: 460px;
+  max-height: min(420px, 70vh);
+  overflow: auto;
+}
+
+.dbml-relation-label__stack-title {
+  color: var(--dbml-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.dbml-relation-label__block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--dbml-border);
+}
+
+.dbml-relation-label__block:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
 .dbml-relation-label__row {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr) auto;
