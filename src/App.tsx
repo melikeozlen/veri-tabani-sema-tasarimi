@@ -71,6 +71,7 @@ function AuthenticatedApp({
             content: full.content,
             kind: 'drive',
             folderId: full.folderId,
+            folderLabel: full.folderLabel,
             url: `https://drive.google.com/file/d/${full.id}/view`,
           };
           return source;

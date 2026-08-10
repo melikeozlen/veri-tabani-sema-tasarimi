@@ -29,6 +29,7 @@ import { toPng } from 'html-to-image';
 import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersistence';
 import { fetchBrandLogo, updateSourceContent } from '../lib/auth';
 import {
@@ -198,7 +199,15 @@ export interface DbmlSource {
   url?: string;
   /** Drive kaynağının Sheet klasör kodu (logo tercihi için) */
   folderId?: string;
+  /** Drive klasörünün görünen adı */
+  folderLabel?: string;
 }
+
+type SourceFolderGroup = {
+  id: string;
+  name: string;
+  sources: DbmlSource[];
+};
 
 export interface DbmlErdViewerProps {
   sources: DbmlSource[];
@@ -1528,8 +1537,6 @@ const LAYOUT_DENSITY_PRESETS: Record<
   },
 };
 
-const LAYOUT_DENSITY_OPTIONS: LayoutDensity[] = ['normal', 'horizontal', 'vertical'];
-
 const elk = new ELK();
 const NODE_WIDTH = 360;
 const HEADER_HEIGHT = 52;
@@ -1732,6 +1739,92 @@ function MoreIcon() {
       <circle cx="12" cy="5" r="1.8" fill="currentColor" />
       <circle cx="12" cy="12" r="1.8" fill="currentColor" />
       <circle cx="12" cy="19" r="1.8" fill="currentColor" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        d="M3.5 7.5A2 2 0 0 1 5.5 5.5h4.2l1.6 1.8H18.5a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-9.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function FilePlusIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        d="M8 3.5h5.5L18.5 8.5V20a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 20V5A1.5 1.5 0 0 1 8 3.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+      <path d="M13.5 3.5V8.5H18.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      <path d="M12 12v5M9.5 14.5h5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ExportIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+      <path
+        d="M12 3.5v10M8.2 10.2 12 14l3.8-3.8M5 18.5h14"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ChevronIcon({ direction }: { direction: 'up' | 'down' }) {
+  return (
+    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+      <path
+        d={direction === 'up' ? 'M7 14.5 12 9.5l5 5' : 'M7 9.5 12 14.5l5-5'}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function MinimapSizeIcon({ compact }: { compact: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
+      {compact ? (
+        <path
+          d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      ) : (
+        <path
+          d="M9 9H4V4M15 9h5V4M9 15H4v5M15 15h5v5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
     </svg>
   );
 }
@@ -2037,6 +2130,85 @@ function sourceDisplayName(fileName: string): string {
   return fileName.replace(/\.(dbml|txt)$/i, '');
 }
 
+const OPEN_SOURCE_FOLDERS_KEY = 'dbml-erd-open-source-folders';
+
+function readOpenSourceFolders(): Set<string> | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(OPEN_SOURCE_FOLDERS_KEY);
+    if (raw === null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((item): item is string => typeof item === 'string'));
+  } catch {
+    return new Set();
+  }
+}
+
+function sourceFolderKey(source: DbmlSource): string {
+  if (source.kind === 'drive') return `drive:${source.folderId || 'unknown'}`;
+  if (source.kind === 'upload') {
+    return source.id.startsWith('upload:local-') ? 'localCopy' : 'upload';
+  }
+  if (source.kind === 'link') return 'link';
+  return 'local';
+}
+
+function sourceFolderName(source: DbmlSource, t: (key: MessageKey) => string): string {
+  if (source.kind === 'drive') {
+    return source.folderLabel?.trim() || source.folderId || t('sources.kind.drive');
+  }
+  if (source.kind === 'upload') {
+    return source.id.startsWith('upload:local-')
+      ? t('sources.folder.localCopy')
+      : t('sources.folder.upload');
+  }
+  if (source.kind === 'link') return t('sources.folder.link');
+  return t('sources.folder.local');
+}
+
+function groupSourcesByFolder(
+  sources: DbmlSource[],
+  t: (key: MessageKey) => string,
+): SourceFolderGroup[] {
+  const groups = new Map<string, SourceFolderGroup>();
+
+  for (const source of sources) {
+    const id = sourceFolderKey(source);
+    const existing = groups.get(id);
+    if (existing) {
+      existing.sources.push(source);
+      continue;
+    }
+    groups.set(id, {
+      id,
+      name: sourceFolderName(source, t),
+      sources: [source],
+    });
+  }
+
+  const kindOrder = (id: string) => {
+    if (id.startsWith('drive:')) return 0;
+    if (id === 'upload') return 1;
+    if (id === 'localCopy') return 2;
+    if (id === 'link') return 3;
+    return 4;
+  };
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      sources: [...group.sources].sort((left, right) =>
+        left.name.localeCompare(right.name, 'tr'),
+      ),
+    }))
+    .sort((left, right) => {
+      const orderDiff = kindOrder(left.id) - kindOrder(right.id);
+      if (orderDiff !== 0) return orderDiff;
+      return left.name.localeCompare(right.name, 'tr');
+    });
+}
+
 function DbmlErdViewerContent({
   sources,
   initialSourceId,
@@ -2069,6 +2241,7 @@ function DbmlErdViewerContent({
   const [saveLoading, setSaveLoading] = useState(false);
   const [editorNotice, setEditorNotice] = useState<string | null>(null);
   const [sourceMenuId, setSourceMenuId] = useState<string | null>(null);
+  const [sourceMenuPos, setSourceMenuPos] = useState<{ top: number; left: number } | null>(null);
   const sourceMenuRef = useRef<HTMLDivElement | null>(null);
   const [saveAsDialog, setSaveAsDialog] = useState<{
     sourceId: string;
@@ -2092,10 +2265,44 @@ function DbmlErdViewerContent({
     }));
   }, [sources, uploadedSources, sourceOverrides]);
 
+  const sourceFolderGroups = useMemo(
+    () => groupSourcesByFolder(allSources, t),
+    [allSources, t],
+  );
+
+  const [sourceSearch, setSourceSearch] = useState('');
+  const deferredSourceSearch = useDeferredValue(sourceSearch);
+  const normalizedSourceSearch = deferredSourceSearch.trim().toLocaleLowerCase('tr-TR');
+
+  const filteredSourceFolderGroups = useMemo(() => {
+    if (!normalizedSourceSearch) return sourceFolderGroups;
+
+    return sourceFolderGroups
+      .map((folder) => {
+        const folderMatch = folder.name.toLocaleLowerCase('tr-TR').includes(normalizedSourceSearch);
+        const sources = folder.sources.filter((source) => {
+          if (folderMatch) return true;
+          const haystack = `${source.name} ${source.label} ${source.folderLabel ?? ''}`.toLocaleLowerCase(
+            'tr-TR',
+          );
+          return haystack.includes(normalizedSourceSearch);
+        });
+        return { ...folder, sources };
+      })
+      .filter((folder) => folder.sources.length > 0);
+  }, [normalizedSourceSearch, sourceFolderGroups]);
+
+  const [openSourceFolders, setOpenSourceFolders] = useState<Set<string>>(
+    () => readOpenSourceFolders() ?? new Set(),
+  );
+  const openSourceFoldersSeededRef = useRef(readOpenSourceFolders() !== null);
+
   const [activeSourceId, setActiveSourceId] = useState(
     () => initialSourceId ?? sources[0]?.id ?? '',
   );
-  const activeSource = allSources.find((item) => item.id === activeSourceId) ?? allSources[0];
+  const activeSource =
+    allSources.find((item) => item.id === activeSourceId) ??
+    (sourcesLoading && activeSourceId ? undefined : allSources[0]);
   const dbml = activeSource?.content ?? '';
   const editingSource =
     allSources.find((item) => item.id === editingSourceId) ?? activeSource ?? null;
@@ -2123,6 +2330,18 @@ function DbmlErdViewerContent({
   });
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
+  const [toolbarOpen, setToolbarOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('dbml-erd-toolbar-open') !== '0';
+  });
+  const [minimapCompact, setMinimapCompact] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('dbml-erd-minimap-compact') === '1';
+  });
+  const [sourceAddOpen, setSourceAddOpen] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('dbml-erd-source-add-open') === '1';
+  });
   const [rightSideWidth, setRightSideWidth] = useState(() => {
     if (typeof window === 'undefined') return 280;
     const saved = Number(window.localStorage.getItem('dbml-erd-right-width'));
@@ -2148,6 +2367,10 @@ function DbmlErdViewerContent({
   const brandScheme: BrandLogoScheme = THEME_META[theme].scheme;
   const [marquee, setMarquee] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
   const [viewLocked, setViewLocked] = useState(false);
+  const [legendOpen, setLegendOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('dbml-erd-legend-open') !== '0';
+  });
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -2237,8 +2460,69 @@ function DbmlErdViewerContent({
   }, [showEdgeInfo]);
 
   useEffect(() => {
+    window.localStorage.setItem('dbml-erd-toolbar-open', toolbarOpen ? '1' : '0');
+  }, [toolbarOpen]);
+
+  useEffect(() => {
+    window.localStorage.setItem('dbml-erd-minimap-compact', minimapCompact ? '1' : '0');
+  }, [minimapCompact]);
+
+  useEffect(() => {
+    window.localStorage.setItem('dbml-erd-source-add-open', sourceAddOpen ? '1' : '0');
+  }, [sourceAddOpen]);
+
+  useEffect(() => {
+    window.localStorage.setItem('dbml-erd-legend-open', legendOpen ? '1' : '0');
+  }, [legendOpen]);
+
+  useEffect(() => {
     window.localStorage.setItem('dbml-erd-right-width', String(rightSideWidth));
   }, [rightSideWidth]);
+
+  useEffect(() => {
+    if (sourceFolderGroups.length === 0) return;
+
+    setOpenSourceFolders((current) => {
+      let next = current;
+      let changed = false;
+
+      // İlk ziyaret: tüm klasörleri açık başlat
+      if (!openSourceFoldersSeededRef.current) {
+        openSourceFoldersSeededRef.current = true;
+        next = new Set(sourceFolderGroups.map((group) => group.id));
+        changed = true;
+      }
+
+      // Aktif dosyanın klasörü her zaman görünür olsun
+      const activeGroup = sourceFolderGroups.find((group) =>
+        group.sources.some((source) => source.id === activeSourceId),
+      );
+      if (activeGroup && !next.has(activeGroup.id)) {
+        if (!changed) next = new Set(next);
+        next.add(activeGroup.id);
+        changed = true;
+      }
+
+      return changed ? next : current;
+    });
+  }, [activeSourceId, sourceFolderGroups]);
+
+  useEffect(() => {
+    if (!openSourceFoldersSeededRef.current) return;
+    window.localStorage.setItem(
+      OPEN_SOURCE_FOLDERS_KEY,
+      JSON.stringify([...openSourceFolders]),
+    );
+  }, [openSourceFolders]);
+
+  function toggleSourceFolder(folderId: string) {
+    setOpenSourceFolders((current) => {
+      const next = new Set(current);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  }
 
   const startRightResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -2280,22 +2564,35 @@ function DbmlErdViewerContent({
     if (!sourceMenuId) return;
 
     function handlePointerDown(event: PointerEvent) {
-      const menu = sourceMenuRef.current;
       const target = event.target;
-      // DOM Node, @xyflow Node ile çakışmasın diye Element üzerinden kontrol
-      if (menu && target instanceof Element && menu.contains(target as never)) return;
+      if (!(target instanceof Element)) return;
+      if (sourceMenuRef.current?.contains(target)) return;
+      if (target.closest(`[data-source-menu-trigger="${sourceMenuId}"]`)) return;
       setSourceMenuId(null);
+      setSourceMenuPos(null);
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setSourceMenuId(null);
+      if (event.key === 'Escape') {
+        setSourceMenuId(null);
+        setSourceMenuPos(null);
+      }
+    }
+
+    function handleReposition() {
+      setSourceMenuId(null);
+      setSourceMenuPos(null);
     }
 
     document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', handleReposition);
+    window.addEventListener('scroll', handleReposition, true);
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', handleReposition);
+      window.removeEventListener('scroll', handleReposition, true);
     };
   }, [sourceMenuId]);
 
@@ -2382,6 +2679,9 @@ function DbmlErdViewerContent({
 
   useEffect(() => {
     if (!sessionReady) return;
+    // Drive kaynakları henüz yüklenirken seçimi ilk dosyaya düşürme —
+    // aksi halde yenilemede kayıtlı aktif dosya kaybolur.
+    if (sourcesLoading) return;
     if (allSources.length === 0) {
       if (activeSourceId) setActiveSourceId('');
       return;
@@ -2389,7 +2689,7 @@ function DbmlErdViewerContent({
     if (!allSources.some((item) => item.id === activeSourceId)) {
       setActiveSourceId(allSources[0].id);
     }
-  }, [activeSourceId, allSources, sessionReady]);
+  }, [activeSourceId, allSources, sessionReady, sourcesLoading]);
 
   useEffect(() => {
     function onPointerMove(event: PointerEvent) {
@@ -2437,10 +2737,11 @@ function DbmlErdViewerContent({
   }, [fitBounds, screenToFlowPosition]);
 
   useEffect(() => {
+    if (sourcesLoading) return;
     if (!activeSource && allSources[0]) {
       setActiveSourceId(allSources[0].id);
     }
-  }, [activeSource, allSources]);
+  }, [activeSource, allSources, sourcesLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2448,7 +2749,10 @@ function DbmlErdViewerContent({
     async function renderDbml() {
       try {
         setError(null);
-        if (!dbml.trim()) throw new Error(tRef.current('error.noSource'));
+        if (!dbml.trim()) {
+          if (sourcesLoading) return;
+          throw new Error(tRef.current('error.noSource'));
+        }
 
         const parsed = parseDbml(dbml);
         if (parsed.tables.length === 0) throw new Error(tRef.current('error.noTable'));
@@ -2484,7 +2788,7 @@ function DbmlErdViewerContent({
     return () => {
       cancelled = true;
     };
-  }, [dbml, fitView, layoutDensity, setEdges, setNodes]);
+  }, [dbml, fitView, layoutDensity, setEdges, setNodes, sourcesLoading]);
 
   useEffect(() => {
     setSelectedTable(null);
@@ -2824,6 +3128,40 @@ function DbmlErdViewerContent({
     }
   }
 
+  async function copySourceFileName(fileName: string) {
+    try {
+      await navigator.clipboard.writeText(fileName);
+    } catch {
+      // Clipboard API yoksa sessizce geç.
+    } finally {
+      setSourceMenuId(null);
+      setSourceMenuPos(null);
+    }
+  }
+
+  function openSourceMenu(sourceId: string, trigger: HTMLElement) {
+    if (sourceMenuId === sourceId) {
+      setSourceMenuId(null);
+      setSourceMenuPos(null);
+      return;
+    }
+
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = 168;
+    const estimatedHeight = 150;
+    const left = Math.min(
+      Math.max(8, rect.right - menuWidth),
+      window.innerWidth - menuWidth - 8,
+    );
+    const top =
+      rect.bottom + 4 + estimatedHeight > window.innerHeight
+        ? Math.max(8, rect.top - estimatedHeight - 4)
+        : rect.bottom + 4;
+
+    setSourceMenuPos({ top, left });
+    setSourceMenuId(sourceId);
+  }
+
   function toggleGroupVisibility(group: NavigatorGroup) {
     setHiddenTableIds((current) => {
       const next = new Set(current);
@@ -3024,6 +3362,7 @@ function DbmlErdViewerContent({
     const removable = uploadedSources.find((item) => item.id === sourceId);
     if (!removable) return;
     setSourceMenuId(null);
+    setSourceMenuPos(null);
     setDeleteDialog({ sourceId: removable.id, name: removable.name });
   }
 
@@ -3079,6 +3418,7 @@ function DbmlErdViewerContent({
     }
 
     setSourceMenuId(null);
+    setSourceMenuPos(null);
     setSaveAsDialog({
       sourceId,
       content,
@@ -3271,7 +3611,12 @@ function DbmlErdViewerContent({
       className={`dbml-erd-viewer ${leftOpen ? 'is-left-open' : ''} ${rightOpen ? 'is-right-open' : ''}${isEditingSource ? ' is-editing-source' : ''}${isFullscreen ? ' is-fullscreen' : ''} ${className}`.trim()}
       data-theme={theme}
       data-scheme={THEME_META[theme].scheme}
-      style={{ height, ['--right-side-width' as string]: `${rightSideWidth}px` }}
+      style={{
+        height,
+        ['--right-side-width' as string]: `${rightSideWidth}px`,
+        ['--dbml-minimap-w' as string]: minimapCompact ? '80px' : '200px',
+        ['--dbml-minimap-h' as string]: minimapCompact ? '60px' : '150px',
+      }}
       aria-label={resolvedTitle}
     >
       <aside className={`dbml-side dbml-side--left${leftOpen ? ' is-open' : ''}`}>
@@ -3404,48 +3749,35 @@ function DbmlErdViewerContent({
             </>
           ) : (
             <>
-          <label className="dbml-theme-select dbml-theme-select--compact">
-            <span
-              className="dbml-theme-select__swatch"
-              style={
-                {
-                  ['--swatch-bg' as string]: THEME_META[theme].swatchBg,
-                  ['--swatch-accent' as string]: THEME_META[theme].swatchAccent,
-                }
-              }
-              aria-hidden="true"
-            />
-            <select
-              value={theme}
-              onChange={(event) => setTheme(event.target.value as ThemeId)}
-              aria-label={t('theme.label')}
-            >
-              {THEME_OPTIONS.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {t(`theme.${option.id}` as MessageKey)}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="dbml-source-actions">
-            <div className="dbml-source-actions__row">
-              <button type="button" className="dbml-side__upload" onClick={() => fileInputRef.current?.click()}>
-                {t('sources.upload')}
-              </button>
-              <button
-                type="button"
-                className="dbml-side__export"
-                onClick={handleExport}
-                disabled={!activeSource?.content.trim()}
-                title={t('sources.exportTitle')}
-              >
-                {t('sources.export')}
-              </button>
+          <div className="dbml-side-toolbar">
+            <div className="dbml-side-toolbar__row">
+              <label className="dbml-theme-select dbml-theme-select--compact">
+                <span
+                  className="dbml-theme-select__swatch"
+                  style={
+                    {
+                      ['--swatch-bg' as string]: THEME_META[theme].swatchBg,
+                      ['--swatch-accent' as string]: THEME_META[theme].swatchAccent,
+                    }
+                  }
+                  aria-hidden="true"
+                />
+                <select
+                  value={theme}
+                  onChange={(event) => setTheme(event.target.value as ThemeId)}
+                  aria-label={t('theme.label')}
+                >
+                  {THEME_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {t(`theme.${option.id}` as MessageKey)}
+                    </option>
+                  ))}
+                </select>
+              </label>
               {onRefreshSources && (
                 <button
                   type="button"
-                  className="dbml-side__export"
+                  className="dbml-side__export dbml-side__refresh"
                   onClick={() => void handleRefreshSources()}
                   disabled={sourcesLoading}
                   title={t('sources.refreshTitle')}
@@ -3454,37 +3786,60 @@ function DbmlErdViewerContent({
                   {sourcesLoading ? t('sources.refreshing') : t('sources.refresh')}
                 </button>
               )}
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".dbml,.txt,text/plain"
-              hidden
-              onChange={handleUpload}
-            />
-
-            <div className="dbml-link-form">
-              <input
-                value={linkUrl}
-                onChange={(event) => {
-                  setLinkUrl(event.target.value);
-                  if (linkError) setLinkError(null);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    void handleAddLink();
-                  }
-                }}
-                placeholder={t('sources.linkPlaceholder')}
-                aria-label={t('sources.linkAria')}
-              />
-              <button type="button" onClick={() => void handleAddLink()} disabled={linkLoading}>
-                {linkLoading ? t('sources.adding') : t('sources.add')}
+              <button
+                type="button"
+                className={`dbml-side__export dbml-side__add-toggle${sourceAddOpen ? ' is-active' : ''}`}
+                onClick={() => setSourceAddOpen((current) => !current)}
+                title={sourceAddOpen ? t('sources.addPanelHide') : t('sources.addPanelShow')}
+                aria-label={sourceAddOpen ? t('sources.addPanelHide') : t('sources.addPanelShow')}
+                aria-expanded={sourceAddOpen}
+                aria-controls="dbml-source-add-panel"
+              >
+                <FilePlusIcon />
               </button>
             </div>
-            {(linkError || sourcesError) && (
-              <div className="dbml-link-form__error">{linkError || sourcesError}</div>
+
+            {sourceAddOpen && (
+              <div id="dbml-source-add-panel" className="dbml-side-toolbar__add">
+                <button
+                  type="button"
+                  className="dbml-side__upload"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {t('sources.upload')}
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".dbml,.txt,text/plain"
+                  hidden
+                  onChange={handleUpload}
+                />
+
+                <div className="dbml-link-form">
+                  <input
+                    value={linkUrl}
+                    onChange={(event) => {
+                      setLinkUrl(event.target.value);
+                      if (linkError) setLinkError(null);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        void handleAddLink();
+                      }
+                    }}
+                    placeholder={t('sources.linkPlaceholder')}
+                    aria-label={t('sources.linkAria')}
+                  />
+                  <button type="button" onClick={() => void handleAddLink()} disabled={linkLoading}>
+                    {linkLoading ? t('sources.adding') : t('sources.add')}
+                  </button>
+                </div>
+                {(linkError || sourcesError) && (
+                  <div className="dbml-link-form__error">{linkError || sourcesError}</div>
+                )}
+              </div>
             )}
           </div>
 
@@ -3498,119 +3853,188 @@ function DbmlErdViewerContent({
             </div>
           )}
 
-          <ul className="dbml-file-list">
-            {allSources.map((source) => {
-              const canRemove = source.kind === 'upload' || source.kind === 'link';
-              const canSaveAs = source.kind === 'drive';
-              const menuOpen = sourceMenuId === source.id;
+          <div className="dbml-source-search">
+            <input
+              type="search"
+              value={sourceSearch}
+              onChange={(event) => setSourceSearch(event.target.value)}
+              placeholder={t('sources.searchPlaceholder')}
+              aria-label={t('sources.searchAria')}
+            />
+            {sourceSearch && (
+              <button
+                type="button"
+                className="dbml-source-search__clear"
+                onClick={() => setSourceSearch('')}
+                aria-label={t('sources.searchClear')}
+                title={t('sources.searchClear')}
+              >
+                ×
+              </button>
+            )}
+          </div>
+
+          <div className="dbml-file-folders">
+            {filteredSourceFolderGroups.map((folder) => {
+              const open = Boolean(normalizedSourceSearch) || openSourceFolders.has(folder.id);
               return (
-                <li
-                  key={source.id}
-                  className={`dbml-file-list__row${source.id === activeSource?.id ? ' is-active' : ''}${menuOpen ? ' is-menu-open' : ''}`}
-                >
+                <section key={folder.id} className={`dbml-file-folder${open ? ' is-open' : ''}`}>
                   <button
                     type="button"
-                    className="dbml-file-list__item"
+                    className="dbml-file-folder__header"
                     onClick={() => {
-                      setSourceMenuId(null);
-                      setActiveSourceId(source.id);
+                      if (normalizedSourceSearch) return;
+                      toggleSourceFolder(folder.id);
                     }}
-                    title={source.url ?? source.name}
+                    aria-expanded={open}
                   >
-                    <span className="dbml-file-list__name">{source.name}</span>
-                    <span className="dbml-file-list__meta">
-                      {source.kind === 'link'
-                        ? t('sources.kind.link')
-                        : source.kind === 'upload'
-                          ? source.id.startsWith('upload:local-')
-                            ? t('sources.kind.localCopy')
-                            : t('sources.kind.upload')
-                          : source.kind === 'drive'
-                            ? source.label || t('sources.kind.drive')
-                            : source.label}
-                      {sourceOverrides[source.id] ? ` · ${t('sources.edited')}` : ''}
+                    <span className="dbml-file-folder__chevron" aria-hidden="true">
+                      {open ? '▾' : '▸'}
                     </span>
+                    <span className="dbml-file-folder__icon" aria-hidden="true">
+                      <FolderIcon />
+                    </span>
+                    <span className="dbml-file-folder__name">{folder.name}</span>
+                    <span className="dbml-file-folder__count">{folder.sources.length}</span>
                   </button>
-                  <div
-                    className="dbml-file-list__actions"
-                    ref={menuOpen ? sourceMenuRef : undefined}
-                  >
-                    <button
-                      type="button"
-                      className={`dbml-file-list__more${menuOpen ? ' is-open' : ''}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setActiveSourceId(source.id);
-                        setSourceMenuId((current) => (current === source.id ? null : source.id));
-                      }}
-                      title={t('sources.menuAria')}
-                      aria-label={`${source.name} — ${t('sources.menuAria')}`}
-                      aria-haspopup="menu"
-                      aria-expanded={menuOpen}
-                    >
-                      <MoreIcon />
-                    </button>
-                    {menuOpen && (
-                      <div className="dbml-file-list__menu" role="menu">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          onClick={() => {
-                            setSourceMenuId(null);
-                            openSourceEditor(source.id);
-                          }}
-                        >
-                          {t('editor.edit')}
-                        </button>
-                        {canSaveAs && (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => openSaveAsDialog(source.id)}
+
+                  {open && (
+                    <ul className="dbml-file-list">
+                      {folder.sources.map((source) => {
+                        const menuOpen = sourceMenuId === source.id;
+                        const kindLabel =
+                          source.kind === 'link'
+                            ? t('sources.kind.link')
+                            : source.kind === 'upload'
+                              ? source.id.startsWith('upload:local-')
+                                ? t('sources.kind.localCopy')
+                                : t('sources.kind.upload')
+                              : source.kind === 'drive'
+                                ? t('sources.kind.drive')
+                                : source.label;
+                        const edited = Boolean(sourceOverrides[source.id]);
+                        return (
+                          <li
+                            key={source.id}
+                            className={`dbml-file-list__row${source.id === activeSourceId ? ' is-active' : ''}${menuOpen ? ' is-menu-open' : ''}`}
                           >
-                            {t('sources.saveAs')}
-                          </button>
-                        )}
-                        {canRemove && (
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="is-danger"
-                            onClick={() => handleRemoveSource(source.id)}
-                          >
-                            {t('sources.delete')}
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </li>
+                            <button
+                              type="button"
+                              className="dbml-file-list__item"
+                              onClick={() => {
+                                setSourceMenuId(null);
+                                setSourceMenuPos(null);
+                                setActiveSourceId(source.id);
+                              }}
+                              title={source.url ?? source.name}
+                            >
+                              <span className="dbml-file-list__name">{source.name}</span>
+                              {(source.kind !== 'drive' || edited) && (
+                                <span className="dbml-file-list__meta">
+                                  {source.kind === 'drive'
+                                    ? t('sources.edited')
+                                    : `${kindLabel}${edited ? ` · ${t('sources.edited')}` : ''}`}
+                                </span>
+                              )}
+                            </button>
+                            <div className="dbml-file-list__actions">
+                              <button
+                                type="button"
+                                className={`dbml-file-list__more${menuOpen ? ' is-open' : ''}`}
+                                data-source-menu-trigger={source.id}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setActiveSourceId(source.id);
+                                  openSourceMenu(source.id, event.currentTarget);
+                                }}
+                                title={t('sources.menuAria')}
+                                aria-label={`${source.name} — ${t('sources.menuAria')}`}
+                                aria-haspopup="menu"
+                                aria-expanded={menuOpen}
+                              >
+                                <MoreIcon />
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
               );
             })}
             {allSources.length === 0 && (
-              <li className="dbml-side__empty">{t('sources.empty')}</li>
+              <div className="dbml-side__empty">{t('sources.empty')}</div>
             )}
-          </ul>
-
-          <div className="dbml-side__footer">
-            <button
-              type="button"
-              className={`dbml-edge-info-toggle${showEdgeInfo ? ' is-on' : ''}`}
-              role="switch"
-              aria-checked={showEdgeInfo}
-              onClick={() => setShowEdgeInfo((current) => !current)}
-            >
-              <span className="dbml-edge-info-toggle__text">
-                <span className="dbml-edge-info-toggle__title">{t('edgeInfo.title')}</span>
-                <span className="dbml-edge-info-toggle__hint">
-                  {showEdgeInfo ? t('edgeInfo.on') : t('edgeInfo.off')}
-                </span>
-              </span>
-              <span className="dbml-edge-info-toggle__switch" aria-hidden="true">
-                <span className="dbml-edge-info-toggle__knob" />
-              </span>
-            </button>
+            {allSources.length > 0 && filteredSourceFolderGroups.length === 0 && (
+              <div className="dbml-side__empty">{t('sources.searchEmpty')}</div>
+            )}
           </div>
+
+          {sourceMenuId &&
+            sourceMenuPos &&
+            viewerRef.current &&
+            (() => {
+              const menuSource = allSources.find((item) => item.id === sourceMenuId);
+              if (!menuSource) return null;
+              const canRemove = menuSource.kind === 'upload' || menuSource.kind === 'link';
+              const canSaveAs = menuSource.kind === 'drive';
+              return createPortal(
+                <div
+                  ref={sourceMenuRef}
+                  className="dbml-file-list__menu dbml-file-list__menu--portal"
+                  role="menu"
+                  style={{ top: sourceMenuPos.top, left: sourceMenuPos.left }}
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setSourceMenuId(null);
+                      setSourceMenuPos(null);
+                      openSourceEditor(menuSource.id);
+                    }}
+                  >
+                    {t('editor.edit')}
+                  </button>
+                  {canSaveAs && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setSourceMenuId(null);
+                        setSourceMenuPos(null);
+                        openSaveAsDialog(menuSource.id);
+                      }}
+                    >
+                      {t('sources.saveAs')}
+                    </button>
+                  )}
+                  {canRemove && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="is-danger"
+                      onClick={() => {
+                        setSourceMenuId(null);
+                        setSourceMenuPos(null);
+                        handleRemoveSource(menuSource.id);
+                      }}
+                    >
+                      {t('sources.delete')}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void copySourceFileName(menuSource.name)}
+                  >
+                    {t('sources.copyName')}
+                  </button>
+                </div>,
+                viewerRef.current,
+              );
+            })()}
             </>
           )}
         </div>
@@ -3734,7 +4158,32 @@ function DbmlErdViewerContent({
             size={isLightScheme(theme) ? 2 : 1}
             color={THEME_META[theme].dot}
           />
-          <MiniMap pannable zoomable position="bottom-right" nodeStrokeWidth={2} />
+          <MiniMap
+            pannable
+            zoomable
+            position="bottom-right"
+            nodeStrokeWidth={2}
+            className={minimapCompact ? 'is-compact' : undefined}
+            style={{
+              width: minimapCompact ? 80 : 200,
+              height: minimapCompact ? 60 : 150,
+            }}
+          />
+          <Panel
+            position="bottom-right"
+            className={`dbml-minimap-toggle nodrag nopan${minimapCompact ? ' is-compact' : ''}`}
+          >
+            <button
+              type="button"
+              className="dbml-minimap-toggle__btn"
+              onClick={() => setMinimapCompact((current) => !current)}
+              title={minimapCompact ? t('minimap.expand') : t('minimap.shrink')}
+              aria-label={minimapCompact ? t('minimap.expand') : t('minimap.shrink')}
+              aria-pressed={minimapCompact}
+            >
+              <MinimapSizeIcon compact={minimapCompact} />
+            </button>
+          </Panel>
           <Controls position="bottom-left" showInteractive={false} showFitView={false}>
             <ControlButton
               className={`dbml-fullscreen-button${isFullscreen ? ' is-fullscreen' : ''}`}
@@ -3826,69 +4275,127 @@ function DbmlErdViewerContent({
                 </svg>
               )}
             </ControlButton>
+            <ControlButton
+              className={`dbml-legend-toggle${legendOpen ? '' : ' is-hidden'}`}
+              onClick={() => setLegendOpen((current) => !current)}
+              title={legendOpen ? t('legend.hide') : t('legend.show')}
+              aria-label={legendOpen ? t('legend.hide') : t('legend.show')}
+              aria-pressed={legendOpen}
+            >
+              <EyeIcon closed={!legendOpen} />
+            </ControlButton>
           </Controls>
 
-          <Panel position="top-center" className="dbml-toolbar nodrag nopan">
-            <div className="dbml-toolbar__title">
-              <span className="dbml-toolbar__eyebrow">{t('toolbar.eyebrow')}</span>
-              <h1>{resolvedTitle}</h1>
-              {activeSource && <span className="dbml-toolbar__file">{activeSource.name}</span>}
-            </div>
+          <Panel
+            position="top-center"
+            className={`dbml-toolbar nodrag nopan${toolbarOpen ? '' : ' is-collapsed'}`}
+          >
+            {toolbarOpen ? (
+              <>
+                <div className="dbml-toolbar__title">
+                  <h1>{resolvedTitle}</h1>
+                  {activeSource && <span className="dbml-toolbar__file">{activeSource.name}</span>}
+                </div>
 
-            <div className="dbml-toolbar__actions">
-              <div className="dbml-density" role="group" aria-label={t('toolbar.density')}>
-                {LAYOUT_DENSITY_OPTIONS.map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    className={`dbml-density__button${layoutDensity === option ? ' is-active' : ''}`}
-                    aria-pressed={layoutDensity === option}
-                    onClick={() => {
-                      if (option === layoutDensity) return;
-                      skipFitViewRef.current = true;
-                      setLayoutDensity(option);
-                    }}
-                    title={t(LAYOUT_DENSITY_PRESETS[option].titleKey)}
+                <div className="dbml-toolbar__actions">
+                  <div
+                    className="dbml-edge-info-control"
+                    role="group"
+                    aria-label={t('edgeInfo.label')}
                   >
-                    {t(LAYOUT_DENSITY_PRESETS[option].labelKey)}
+                    <span className="dbml-edge-info-control__label">{t('edgeInfo.label')}</span>
+                    <div className="dbml-edge-info-control__buttons">
+                      <button
+                        type="button"
+                        className={`dbml-edge-info-control__btn${showEdgeInfo ? ' is-active' : ''}`}
+                        aria-pressed={showEdgeInfo}
+                        title={t('edgeInfo.showTitle')}
+                        onClick={() => setShowEdgeInfo(true)}
+                      >
+                        {t('edgeInfo.show')}
+                      </button>
+                      <button
+                        type="button"
+                        className={`dbml-edge-info-control__btn${!showEdgeInfo ? ' is-active' : ''}`}
+                        aria-pressed={!showEdgeInfo}
+                        title={t('edgeInfo.hideTitle')}
+                        onClick={() => setShowEdgeInfo(false)}
+                      >
+                        {t('edgeInfo.hide')}
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="dbml-toolbar__button"
+                    onClick={() => fitView({ padding: 0.12, duration: 450, maxZoom: 1 })}
+                  >
+                    {t('toolbar.fit')}
                   </button>
-                ))}
-              </div>
+                  <button type="button" className="dbml-toolbar__button" onClick={focusSearchResult}>
+                    {t('toolbar.focusResult')}
+                  </button>
+                  <button
+                    type="button"
+                    className="dbml-toolbar__button dbml-toolbar__button--export-dbml"
+                    onClick={handleExport}
+                    disabled={!activeSource?.content.trim()}
+                    title={t('sources.exportTitle')}
+                    aria-label={t('sources.exportTitle')}
+                  >
+                    <ExportIcon />
+                    <span>{t('sources.export')}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="dbml-toolbar__button dbml-toolbar__button--primary"
+                    onClick={() => void handleExportPng()}
+                    disabled={pngExporting || nodes.length === 0}
+                    title={t('export.pngTitle')}
+                  >
+                    {pngExporting ? t('export.pngSaving') : t('export.png')}
+                  </button>
+                  <button
+                    type="button"
+                    className="dbml-toolbar__collapse"
+                    onClick={() => setToolbarOpen(false)}
+                    title={t('toolbar.collapse')}
+                    aria-label={t('toolbar.collapse')}
+                    aria-expanded={true}
+                  >
+                    <ChevronIcon direction="up" />
+                  </button>
+                </div>
+              </>
+            ) : (
               <button
                 type="button"
-                className="dbml-toolbar__button"
-                onClick={() => fitView({ padding: 0.12, duration: 450, maxZoom: 1 })}
+                className="dbml-toolbar__expand"
+                onClick={() => setToolbarOpen(true)}
+                title={t('toolbar.expand')}
+                aria-label={t('toolbar.expand')}
+                aria-expanded={false}
               >
-                {t('toolbar.fit')}
+                <ChevronIcon direction="down" />
               </button>
-              <button type="button" className="dbml-toolbar__button" onClick={focusSearchResult}>
-                {t('toolbar.focusResult')}
-              </button>
-              <button
-                type="button"
-                className="dbml-toolbar__button dbml-toolbar__button--primary"
-                onClick={() => void handleExportPng()}
-                disabled={pngExporting || nodes.length === 0}
-                title={t('export.pngTitle')}
-              >
-                {pngExporting ? t('export.pngSaving') : t('export.png')}
-              </button>
-            </div>
+            )}
           </Panel>
 
-          <Panel position="bottom-left" className="dbml-legend nodrag nopan">
-            <span><b className="dbml-legend__dot dbml-legend__dot--pk" />PK</span>
-            <span><b className="dbml-legend__dot dbml-legend__dot--fk" />FK</span>
-            <span><b className="dbml-legend__dot dbml-legend__dot--enum" />E Enum</span>
-            <span><b className="dbml-legend__dot dbml-legend__dot--ai" />AI Auto Increment</span>
-            <span><b>1</b> {t('legend.one')}</span>
-            <span><b>N</b> {t('legend.many')}</span>
-            <span className="dbml-legend__hint">
-              {viewLocked
-                ? t('legend.locked')
-                : t('legend.hint')}
-            </span>
-          </Panel>
+          {legendOpen && (
+            <Panel position="bottom-left" className="dbml-legend nodrag nopan">
+              <span><b className="dbml-legend__dot dbml-legend__dot--pk" />PK</span>
+              <span><b className="dbml-legend__dot dbml-legend__dot--fk" />FK</span>
+              <span><b className="dbml-legend__dot dbml-legend__dot--enum" />E Enum</span>
+              <span><b className="dbml-legend__dot dbml-legend__dot--ai" />AI Auto Increment</span>
+              <span><b>1</b> {t('legend.one')}</span>
+              <span><b>N</b> {t('legend.many')}</span>
+              <span className="dbml-legend__hint">
+                {viewLocked
+                  ? t('legend.locked')
+                  : t('legend.hint')}
+              </span>
+            </Panel>
+          )}
 
           {error && <Panel position="top-center" className="dbml-error nodrag nopan">{error}</Panel>}
         </ReactFlow>
