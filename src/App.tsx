@@ -56,50 +56,53 @@ function AuthenticatedApp({
   const [sourcesError, setSourcesError] = useState<string | null>(null);
   const [sourcesLoading, setSourcesLoading] = useState(true);
 
+  const loadDriveSources = useCallback(async (signal?: { cancelled: boolean }) => {
+    setSourcesLoading(true);
+    setSourcesError(null);
+    try {
+      const list = await fetchSourceList(token);
+      const loaded = await Promise.all(
+        list.map(async (item) => {
+          const full = await fetchSourceContent(token, item.id);
+          const source: DbmlSource = {
+            id: `drive:${full.id}`,
+            name: full.name,
+            label: `${full.folderLabel} · ${sourceDisplayName(full.name)}`,
+            content: full.content,
+            kind: 'drive',
+            folderId: full.folderId,
+            url: `https://drive.google.com/file/d/${full.id}/view`,
+          };
+          return source;
+        }),
+      );
+      if (signal?.cancelled) return;
+      setDriveSources(loaded);
+    } catch (error) {
+      if (signal?.cancelled) return;
+      setDriveSources([]);
+      setSourcesError(
+        error instanceof Error ? error.message : t('sources.loadFailed'),
+      );
+    } finally {
+      if (!signal?.cancelled) setSourcesLoading(false);
+    }
+    // Dil değişiminde yeniden çekme — yalnızca oturum / ERD görünümü.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t bilerek hariç
+  }, [token]);
+
   useEffect(() => {
     if (view !== 'erd') return;
 
-    let cancelled = false;
-
-    (async () => {
-      setSourcesLoading(true);
-      setSourcesError(null);
-      try {
-        const list = await fetchSourceList(token);
-        const loaded = await Promise.all(
-          list.map(async (item) => {
-            const full = await fetchSourceContent(token, item.id);
-            const source: DbmlSource = {
-              id: `drive:${full.id}`,
-              name: full.name,
-              label: `${full.folderLabel} · ${sourceDisplayName(full.name)}`,
-              content: full.content,
-              kind: 'drive',
-              folderId: full.folderId,
-              url: `https://drive.google.com/file/d/${full.id}/view`,
-            };
-            return source;
-          }),
-        );
-        if (!cancelled) setDriveSources(loaded);
-      } catch (error) {
-        if (!cancelled) {
-          setDriveSources([]);
-          setSourcesError(
-            error instanceof Error ? error.message : t('sources.loadFailed'),
-          );
-        }
-      } finally {
-        if (!cancelled) setSourcesLoading(false);
-      }
-    })();
+    const signal = { cancelled: false };
+    void loadDriveSources(signal);
 
     return () => {
-      cancelled = true;
+      signal.cancelled = true;
     };
-    // Dil değişiminde yeniden çekme — yalnızca oturum / ERD görünümü.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- t bilerek hariç
-  }, [token, view]);
+  }, [view, loadDriveSources]);
+
+  const handleRefreshSources = useCallback(() => loadDriveSources(), [loadDriveSources]);
 
   const sources = useMemo(
     () => [...driveSources, ...LOCAL_SOURCES],
@@ -152,6 +155,7 @@ function AuthenticatedApp({
         onLogout={handleLogout}
         onOpenAdmin={isSuperAdmin ? handleOpenAdmin : undefined}
         onDriveSourceUpdated={handleDriveSourceUpdated}
+        onRefreshSources={handleRefreshSources}
       />
     </>
   );

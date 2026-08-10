@@ -1891,9 +1891,23 @@ body.dbml-resizing-side * {
 }
 
 .dbml-field__name {
+  overflow: hidden;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
   color: var(--dbml-text);
+  background: transparent;
+  font: inherit;
   font-size: 12px;
   font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dbml-field__name.is-copied {
+  animation: dbml-title-pop 280ms ease;
 }
 
 .dbml-field__type {
@@ -2311,6 +2325,15 @@ body.dbml-resizing-side * {
 .dbml-search button:hover {
   color: var(--dbml-text-strong);
   background: var(--dbml-hover);
+}
+
+.dbml-search__shortcut {
+  margin: 4px 0 0;
+  color: var(--dbml-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  opacity: 0.85;
 }
 
 .dbml-search-select {

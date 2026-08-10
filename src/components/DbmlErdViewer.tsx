@@ -207,6 +207,7 @@ export interface DbmlErdViewerProps {
   onLogout?: () => void;
   onOpenAdmin?: () => void;
   onDriveSourceUpdated?: (sourceId: string, content: string) => void;
+  onRefreshSources?: () => void | Promise<void>;
 }
 
 interface NavigatorGroup {
@@ -873,6 +874,55 @@ function parseDbml(source: string): ParseResult {
   return { tables, enums, tableGroups, relations, warnings };
 }
 
+function quoteDbmlString(value: string): string {
+  if (value.includes('\n') || value.includes("'''")) {
+    return `'''${value}'''`;
+  }
+  if (value.includes("'")) {
+    return `"${value.replaceAll('"', '\\"')}"`;
+  }
+  return `'${value}'`;
+}
+
+function formatFieldSettingsForDbml(settings: FieldSettings): string {
+  const parts: string[] = [];
+  if (settings.primaryKey) parts.push('pk');
+  if (settings.notNull) parts.push('not null');
+  if (settings.unique) parts.push('unique');
+  if (settings.increment) parts.push('increment');
+  if (settings.defaultValue !== undefined) parts.push(`default: ${settings.defaultValue}`);
+  if (settings.note) parts.push(`note: ${quoteDbmlString(settings.note)}`);
+  if (settings.inlineRef) parts.push(`ref: ${settings.inlineRef}`);
+  return parts.length > 0 ? ` [${parts.join(', ')}]` : '';
+}
+
+function tableToDbml(table: DbmlTable): string {
+  const name = table.schema ? `${table.schema}.${table.name}` : table.name;
+  const alias = table.alias ? ` as ${table.alias}` : '';
+  const lines: string[] = [`Table ${name}${alias} {`];
+
+  if (table.note) {
+    lines.push(`  Note: ${quoteDbmlString(table.note)}`);
+  }
+
+  for (const field of table.fields) {
+    lines.push(`  ${field.name} ${field.type}${formatFieldSettingsForDbml(field.settings)}`);
+  }
+
+  lines.push('}');
+  return `${lines.join('\n')}\n`;
+}
+
+function downloadTextFile(content: string, fileName: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 // -----------------------------------------------------------------------------
 // React Flow custom node and edge
 // -----------------------------------------------------------------------------
@@ -933,7 +983,9 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
   const normalizedSearch = searchTerm.trim().toLocaleLowerCase(searchLocale);
   const highlightColumns = normalizedSearch.length > 0 && searchScopes.includes('column');
   const [copiedName, setCopiedName] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const copyResetRef = useRef<number | null>(null);
+  const fieldCopyResetRef = useRef<number | null>(null);
 
   async function copyTableName(event: MouseEvent) {
     event.stopPropagation();
@@ -943,6 +995,19 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
       setCopiedName(true);
       if (copyResetRef.current !== null) window.clearTimeout(copyResetRef.current);
       copyResetRef.current = window.setTimeout(() => setCopiedName(false), 280);
+    } catch {
+      // Clipboard API yoksa sessizce geç.
+    }
+  }
+
+  async function copyFieldName(event: MouseEvent, fieldName: string) {
+    event.stopPropagation();
+    event.preventDefault();
+    try {
+      await navigator.clipboard.writeText(fieldName);
+      setCopiedField(fieldName);
+      if (fieldCopyResetRef.current !== null) window.clearTimeout(fieldCopyResetRef.current);
+      fieldCopyResetRef.current = window.setTimeout(() => setCopiedField(null), 280);
     } catch {
       // Clipboard API yoksa sessizce geç.
     }
@@ -995,6 +1060,29 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
                 <path d="M2 5.5h12M6 5.5v8" fill="none" stroke="currentColor" strokeWidth="1.4" />
               </svg>
             </button>
+            <button
+              type="button"
+              className="dbml-table-data-icon nodrag nopan"
+              aria-label={getMessage('table.exportDbml')}
+              title={getMessage('table.exportDbml')}
+              onClick={(event) => {
+                event.stopPropagation();
+                event.preventDefault();
+                downloadTextFile(tableToDbml(table), `${table.fullName.replaceAll('.', '_')}.dbml`);
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <path
+                  d="M8 2.5v7M5.2 7.2 8 10l2.8-2.8M3 12.5h10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
           </div>
         </div>
         <span className="dbml-table-node__count">{table.fields.length}</span>
@@ -1031,8 +1119,19 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
                 )}
               </div>
 
-              <div className="dbml-field__name">{field.name}</div>
-              <div className="dbml-field__type">{field.type}</div>
+              <button
+                type="button"
+                className={`dbml-field__name nodrag nopan${copiedField === field.name ? ' is-copied' : ''}`}
+                title={getMessage('copy.columnClick', { name: field.name })}
+                aria-label={getMessage('copy.nameAria', { name: field.name })}
+                onClick={(event) => void copyFieldName(event, field.name)}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                {field.name}
+              </button>
+              <div className="dbml-field__type" title={field.type}>
+                {field.type}
+              </div>
 
               <div className="dbml-field__constraints">
                 {field.settings.notNull && <span className={badgeClass('nn')}>NN</span>}
@@ -1883,12 +1982,15 @@ function DbmlErdViewerContent({
   onLogout,
   onOpenAdmin,
   onDriveSourceUpdated,
+  onRefreshSources,
 }: DbmlErdViewerProps) {
   const { t, locale } = useI18n();
   const tRef = useRef(t);
   tRef.current = t;
   const resolvedTitle = title ?? t('app.defaultTitle');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const pendingSearchFocusRef = useRef(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [uploadedSources, setUploadedSources] = useState<DbmlSource[]>([]);
   const [sourceOverrides, setSourceOverrides] = useState<Record<string, string>>({});
@@ -2126,6 +2228,43 @@ function DbmlErdViewerContent({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [sourceMenuId]);
+
+  useEffect(() => {
+    function focusSearchInput() {
+      const input = searchInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    }
+
+    function handleSearchShortcut(event: KeyboardEvent) {
+      if (!event.shiftKey || event.altKey) return;
+      if (!(event.ctrlKey || event.metaKey)) return;
+      if (event.key.toLowerCase() !== 'f') return;
+
+      event.preventDefault();
+      setRightOpen((wasOpen) => {
+        if (wasOpen) {
+          requestAnimationFrame(focusSearchInput);
+        } else {
+          pendingSearchFocusRef.current = true;
+        }
+        return true;
+      });
+    }
+
+    document.addEventListener('keydown', handleSearchShortcut);
+    return () => document.removeEventListener('keydown', handleSearchShortcut);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!rightOpen || !pendingSearchFocusRef.current) return;
+    pendingSearchFocusRef.current = false;
+    const input = searchInputRef.current;
+    if (!input) return;
+    input.focus();
+    input.select();
+  }, [rightOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2636,16 +2775,24 @@ function DbmlErdViewerContent({
       return;
     }
 
-    const rawName = activeSource.name || 'export.dbml';
-    const fileName = /\.(dbml|txt)$/i.test(rawName) ? rawName : `${rawName}.dbml`;
-    const blob = new Blob([activeSource.content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = fileName;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    const baseName = (activeSource.name || 'export').replace(/\.(dbml|txt)$/i, '') || 'export';
+    downloadTextFile(activeSource.content, `${baseName}.dbml`);
     setLinkError(null);
+  }
+
+  async function handleRefreshSources() {
+    if (!onRefreshSources || sourcesLoading) return;
+
+    // Drive'dan gelen taze içerik görünsün diye yerel düzenlemeleri temizle.
+    setSourceOverrides((current) => {
+      const next: Record<string, string> = {};
+      for (const [id, content] of Object.entries(current)) {
+        if (!id.startsWith('drive:')) next[id] = content;
+      }
+      return next;
+    });
+    setLinkError(null);
+    await onRefreshSources();
   }
 
   async function handleExportPng() {
@@ -3191,6 +3338,18 @@ function DbmlErdViewerContent({
               >
                 {t('sources.export')}
               </button>
+              {onRefreshSources && (
+                <button
+                  type="button"
+                  className="dbml-side__export"
+                  onClick={() => void handleRefreshSources()}
+                  disabled={sourcesLoading}
+                  title={t('sources.refreshTitle')}
+                  aria-label={t('sources.refreshTitle')}
+                >
+                  {sourcesLoading ? t('sources.refreshing') : t('sources.refresh')}
+                </button>
+              )}
             </div>
             <input
               ref={fileInputRef}
@@ -3683,6 +3842,7 @@ function DbmlErdViewerContent({
           <label className="dbml-search">
             <span className="dbml-search__icon" aria-hidden="true">⌕</span>
             <input
+              ref={searchInputRef}
               value={searchTerm}
               onChange={(event) => setSearchTerm(event.target.value)}
               onKeyDown={(event) => {
@@ -3696,6 +3856,14 @@ function DbmlErdViewerContent({
               </button>
             )}
           </label>
+          <p className="dbml-search__shortcut" aria-hidden="true">
+            {t('search.shortcutHint', {
+              keys:
+                typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform)
+                  ? t('search.shortcutKeysMac')
+                  : t('search.shortcutKeys'),
+            })}
+          </p>
 
           <div className="dbml-side__stats" aria-label={t('stats.summary')}>
             <span>
