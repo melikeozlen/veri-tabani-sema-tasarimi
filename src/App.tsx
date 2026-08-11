@@ -1,11 +1,16 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AdminPage } from './components/AdminPage';
 import { DbmlErdViewer, type DbmlSource } from './components/DbmlErdViewer';
 import { LoginPage } from './components/LoginPage';
 import './components/dbml-erd.css';
 import './components/login.css';
 import { fetchSourceContent, fetchSourceList, mapWithConcurrency } from './lib/auth';
-import { loadDriveSourcesCache, saveDriveSourcesCache } from './lib/driveSourcesCache';
+import {
+  hasDriveSourcesFetched,
+  loadDriveSourcesCache,
+  markDriveSourcesFetched,
+  saveDriveSourcesCache,
+} from './lib/driveSourcesCache';
 import { useI18n } from './lib/i18n';
 import { applyThemeToDocument, readStoredTheme } from './lib/theme';
 import { useAuth } from './lib/useAuth';
@@ -56,17 +61,7 @@ function AuthenticatedApp({
   const [driveSources, setDriveSources] = useState<DbmlSource[]>([]);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
   const [sourcesLoading, setSourcesLoading] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void loadDriveSourcesCache(username).then((cached) => {
-      if (cancelled || !cached?.sources.length) return;
-      setDriveSources(cached.sources);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [username]);
+  const autoFetchStartedRef = useRef(false);
 
   const loadDriveSources = useCallback(async () => {
     setSourcesLoading(true);
@@ -95,10 +90,39 @@ function AuthenticatedApp({
     } catch (error) {
       setSourcesError(error instanceof Error ? error.message : t('sources.loadFailed'));
     } finally {
+      markDriveSourcesFetched(username);
       setSourcesLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- t bilerek hariç
   }, [token, username]);
+
+  useEffect(() => {
+    autoFetchStartedRef.current = false;
+  }, [username]);
+
+  useEffect(() => {
+    if (view !== 'erd') return;
+
+    let cancelled = false;
+
+    void (async () => {
+      const cached = await loadDriveSourcesCache(username);
+      if (cancelled) return;
+
+      if (cached?.sources.length) {
+        setDriveSources(cached.sources);
+        return;
+      }
+
+      if (hasDriveSourcesFetched(username) || autoFetchStartedRef.current) return;
+      autoFetchStartedRef.current = true;
+      await loadDriveSources();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [view, username, loadDriveSources]);
 
   const handleRefreshSources = useCallback(() => loadDriveSources(), [loadDriveSources]);
 

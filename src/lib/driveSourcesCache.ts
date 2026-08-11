@@ -109,3 +109,20 @@ export async function saveDriveSourcesCache(
   };
   await idbSet(cacheKey(username), entry);
 }
+
+const FETCHED_LS_PREFIX = 'dbml-erd-drive-fetched:';
+
+function fetchedLsKey(username: string): string {
+  return `${FETCHED_LS_PREFIX}${username.trim().toLowerCase()}`;
+}
+
+/** Bu kullanıcı için Drive kaynakları en az bir kez çekildi mi? */
+export function hasDriveSourcesFetched(username: string): boolean {
+  if (typeof window === 'undefined' || !username.trim()) return false;
+  return window.localStorage.getItem(fetchedLsKey(username)) === '1';
+}
+
+export function markDriveSourcesFetched(username: string): void {
+  if (typeof window === 'undefined' || !username.trim()) return;
+  window.localStorage.setItem(fetchedLsKey(username), '1');
+}
