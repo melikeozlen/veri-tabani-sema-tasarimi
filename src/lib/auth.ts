@@ -118,6 +118,49 @@ export async function clearAuthSession(): Promise<void> {
   await idbDelete(AUTH_KEY);
 }
 
+const DEFAULT_FETCH_TIMEOUT_MS = 45_000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit & { timeoutMs?: number } = {},
+): Promise<Response> {
+  const { timeoutMs = DEFAULT_FETCH_TIMEOUT_MS, ...fetchInit } = init;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...fetchInit, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Sunucu yanıt vermedi (zaman aşımı). Google API kotası veya ağ sorunu olabilir.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  }
+
+  const workers = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(Array.from({ length: workers }, () => worker()));
+  return results;
+}
+
 export async function apiFetch<T>(
   path: string,
   options: RequestInit & { token?: string } = {},
@@ -133,7 +176,7 @@ export async function apiFetch<T>(
     (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
   const url = path.startsWith('http') ? path : `${base}${path}`;
 
-  const response = await fetch(url, { ...options, headers });
+  const response = await fetchWithTimeout(url, { ...options, headers });
   const data = (await response.json().catch(() => ({}))) as T & { error?: string };
 
   if (!response.ok) {
@@ -199,27 +242,4 @@ export async function updateSourceContent(
     },
   );
   return data.source;
-}
-
-export async function fetchBrandLogo(
-  token: string,
-  scheme: 'light' | 'dark',
-  folderId?: string,
-): Promise<Blob | null> {
-  const base =
-    (typeof import.meta.env.VITE_API_BASE === 'string' && import.meta.env.VITE_API_BASE.trim()) ||
-    (import.meta.env.DEV ? 'http://127.0.0.1:3001' : '');
-  const params = new URLSearchParams();
-  if (folderId) params.set('folderId', folderId);
-  const query = params.toString();
-  const url = `${base}/api/brand/logo/${scheme}${query ? `?${query}` : ''}`;
-
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Logo alınamadı (${response.status})`);
-  }
-  return response.blob();
 }

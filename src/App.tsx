@@ -4,7 +4,8 @@ import { DbmlErdViewer, type DbmlSource } from './components/DbmlErdViewer';
 import { LoginPage } from './components/LoginPage';
 import './components/dbml-erd.css';
 import './components/login.css';
-import { fetchSourceContent, fetchSourceList } from './lib/auth';
+import { fetchSourceContent, fetchSourceList, mapWithConcurrency } from './lib/auth';
+import { loadDriveSourcesCache, saveDriveSourcesCache } from './lib/driveSourcesCache';
 import { useI18n } from './lib/i18n';
 import { applyThemeToDocument, readStoredTheme } from './lib/theme';
 import { useAuth } from './lib/useAuth';
@@ -54,54 +55,50 @@ function AuthenticatedApp({
 
   const [driveSources, setDriveSources] = useState<DbmlSource[]>([]);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
-  const [sourcesLoading, setSourcesLoading] = useState(true);
+  const [sourcesLoading, setSourcesLoading] = useState(false);
 
-  const loadDriveSources = useCallback(async (signal?: { cancelled: boolean }) => {
+  useEffect(() => {
+    let cancelled = false;
+    void loadDriveSourcesCache(username).then((cached) => {
+      if (cancelled || !cached?.sources.length) return;
+      setDriveSources(cached.sources);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [username]);
+
+  const loadDriveSources = useCallback(async () => {
     setSourcesLoading(true);
     setSourcesError(null);
     try {
       const list = await fetchSourceList(token);
-      const loaded = await Promise.all(
-        list.map(async (item) => {
-          const full = await fetchSourceContent(token, item.id);
-          const source: DbmlSource = {
-            id: `drive:${full.id}`,
-            name: full.name,
-            label: `${full.folderLabel} · ${sourceDisplayName(full.name)}`,
-            content: full.content,
-            kind: 'drive',
-            folderId: full.folderId,
-            folderLabel: full.folderLabel,
-            url: `https://drive.google.com/file/d/${full.id}/view`,
-          };
-          return source;
-        }),
-      );
-      if (signal?.cancelled) return;
+      const loaded = await mapWithConcurrency(list, 4, async (item) => {
+        const full = await fetchSourceContent(token, item.id);
+        const source: DbmlSource = {
+          id: `drive:${full.id}`,
+          name: full.name,
+          label: `${full.folderLabel} · ${sourceDisplayName(full.name)}`,
+          content: full.content,
+          kind: 'drive',
+          folderId: full.folderId,
+          folderLabel: full.folderLabel,
+          url: `https://drive.google.com/file/d/${full.id}/view`,
+        };
+        return source;
+      });
       setDriveSources(loaded);
-    } catch (error) {
-      if (signal?.cancelled) return;
-      setDriveSources([]);
-      setSourcesError(
-        error instanceof Error ? error.message : t('sources.loadFailed'),
+      await saveDriveSourcesCache(
+        username,
+        loaded.filter((source): source is DbmlSource & { kind: 'drive' } => source.kind === 'drive'),
       );
+    } catch (error) {
+      setSourcesError(error instanceof Error ? error.message : t('sources.loadFailed'));
     } finally {
-      if (!signal?.cancelled) setSourcesLoading(false);
+      setSourcesLoading(false);
     }
-    // Dil değişiminde yeniden çekme — yalnızca oturum / ERD görünümü.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- t bilerek hariç
-  }, [token]);
-
-  useEffect(() => {
-    if (view !== 'erd') return;
-
-    const signal = { cancelled: false };
-    void loadDriveSources(signal);
-
-    return () => {
-      signal.cancelled = true;
-    };
-  }, [view, loadDriveSources]);
+  }, [token, username]);
 
   const handleRefreshSources = useCallback(() => loadDriveSources(), [loadDriveSources]);
 
@@ -116,12 +113,17 @@ function AuthenticatedApp({
     void onLogout();
   }, [onLogout]);
   const handleDriveSourceUpdated = useCallback((sourceId: string, content: string) => {
-    setDriveSources((current) =>
-      current.map((source) =>
+    setDriveSources((current) => {
+      const next = current.map((source) =>
         source.id === sourceId ? { ...source, content } : source,
-      ),
-    );
-  }, []);
+      );
+      const driveOnly = next.filter(
+        (source): source is DbmlSource & { kind: 'drive' } => source.kind === 'drive',
+      );
+      void saveDriveSourcesCache(username, driveOnly);
+      return next;
+    });
+  }, [username]);
 
   if (view === 'admin' && isSuperAdmin) {
     return (
