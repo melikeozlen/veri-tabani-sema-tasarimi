@@ -30,7 +30,7 @@ import '@xyflow/react/dist/style.css';
 import './dbml-erd.css';
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, startTransition, type ChangeEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersistence';
+import { loadPersistedSession, readStoredActiveSourceId, savePersistedSession } from '../lib/sourcePersistence';
 import { updateSourceContent } from '../lib/auth';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
@@ -2180,11 +2180,12 @@ function DbmlErdViewerContent({
   const openSourceFoldersSeededRef = useRef(readOpenSourceFolders() !== null);
 
   const [activeSourceId, setActiveSourceId] = useState(
-    () => initialSourceId ?? sources[0]?.id ?? '',
+    () => initialSourceId ?? (readStoredActiveSourceId() || sources[0]?.id || ''),
   );
+  const pendingActiveSourceIdRef = useRef(activeSourceId);
   const activeSource =
     allSources.find((item) => item.id === activeSourceId) ??
-    (sourcesLoading && activeSourceId ? undefined : allSources[0]);
+    ((sourcesLoading || !sessionReady) && activeSourceId ? undefined : allSources[0]);
   const dbml = activeSource?.content ?? '';
   const editingSource =
     allSources.find((item) => item.id === editingSourceId) ?? activeSource ?? null;
@@ -2550,10 +2551,10 @@ function DbmlErdViewerContent({
         );
         setUploadedSources(localUploads);
         setSourceOverrides(session.sourceOverrides);
-        if (session.activeSourceId) {
-          setActiveSourceId(session.activeSourceId);
-        } else if (!initialSourceId && localUploads[0]) {
-          setActiveSourceId(localUploads[0].id);
+        const restoredId = session.activeSourceId || (!initialSourceId ? localUploads[0]?.id : '') || '';
+        if (restoredId) {
+          pendingActiveSourceIdRef.current = restoredId;
+          setActiveSourceId(restoredId);
         }
         setSessionReady(true);
       })
@@ -2584,10 +2585,19 @@ function DbmlErdViewerContent({
   }, [activeSourceId, sessionReady, sourceOverrides, uploadedSources, t]);
 
   useEffect(() => {
-    if (!sessionReady) return;
-    // Drive kaynakları henüz yüklenirken seçimi ilk dosyaya düşürme —
-    // aksi halde yenilemede kayıtlı aktif dosya kaybolur.
-    if (sourcesLoading) return;
+    const pendingId = pendingActiveSourceIdRef.current;
+    if (pendingId && allSources.some((item) => item.id === pendingId)) {
+      if (activeSourceId !== pendingId) setActiveSourceId(pendingId);
+      if (sessionReady) pendingActiveSourceIdRef.current = '';
+      return;
+    }
+
+    if (!sessionReady || sourcesLoading) return;
+
+    if (pendingId && !allSources.some((item) => item.id === pendingId)) {
+      pendingActiveSourceIdRef.current = '';
+    }
+
     if (allSources.length === 0) {
       if (activeSourceId) setActiveSourceId('');
       return;
@@ -2641,13 +2651,6 @@ function DbmlErdViewerContent({
       window.removeEventListener('pointerup', onPointerUp);
     };
   }, [fitBounds, screenToFlowPosition]);
-
-  useEffect(() => {
-    if (sourcesLoading) return;
-    if (!activeSource && allSources[0]) {
-      setActiveSourceId(allSources[0].id);
-    }
-  }, [activeSource, allSources, sourcesLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3853,6 +3856,7 @@ function DbmlErdViewerContent({
                               onClick={() => {
                                 setSourceMenuId(null);
                                 setSourceMenuPos(null);
+                                pendingActiveSourceIdRef.current = source.id;
                                 setActiveSourceId(source.id);
                               }}
                               title={source.url ?? source.name}
@@ -3873,6 +3877,7 @@ function DbmlErdViewerContent({
                                 data-source-menu-trigger={source.id}
                                 onClick={(event) => {
                                   event.stopPropagation();
+                                  pendingActiveSourceIdRef.current = source.id;
                                   setActiveSourceId(source.id);
                                   openSourceMenu(source.id, event.currentTarget);
                                 }}

@@ -60,7 +60,7 @@ function AuthenticatedApp({
 
   const [driveSources, setDriveSources] = useState<DbmlSource[]>([]);
   const [sourcesError, setSourcesError] = useState<string | null>(null);
-  const [sourcesLoading, setSourcesLoading] = useState(false);
+  const [sourcesLoading, setSourcesLoading] = useState(true);
   const autoFetchStartedRef = useRef(false);
 
   const loadDriveSources = useCallback(async () => {
@@ -104,6 +104,7 @@ function AuthenticatedApp({
     if (view !== 'erd') return;
 
     let cancelled = false;
+    setSourcesLoading(true);
 
     void (async () => {
       const cached = await loadDriveSourcesCache(username);
@@ -111,10 +112,14 @@ function AuthenticatedApp({
 
       if (cached?.sources.length) {
         setDriveSources(cached.sources);
+        setSourcesLoading(false);
         return;
       }
 
-      if (hasDriveSourcesFetched(username) || autoFetchStartedRef.current) return;
+      if (hasDriveSourcesFetched(username) || autoFetchStartedRef.current) {
+        setSourcesLoading(false);
+        return;
+      }
       autoFetchStartedRef.current = true;
       await loadDriveSources();
     })();

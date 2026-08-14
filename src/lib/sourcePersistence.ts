@@ -14,6 +14,7 @@ const STORE_NAME = 'session';
 const UPLOADED_KEY = 'uploadedSources';
 const OVERRIDES_KEY = 'sourceOverrides';
 const ACTIVE_KEY = 'activeSourceId';
+const ACTIVE_LS_KEY = 'dbml-erd-active-source-id';
 
 /** Eski localStorage anahtarları — bir kez IndexedDB'ye taşınıp silinir. */
 const LEGACY_UPLOADED_KEY = 'dbml-erd-uploaded-sources';
@@ -124,6 +125,25 @@ function clearLegacyLocalStorage() {
   }
 }
 
+export function readStoredActiveSourceId(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return window.localStorage.getItem(ACTIVE_LS_KEY) ?? window.localStorage.getItem(LEGACY_ACTIVE_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function writeStoredActiveSourceId(activeSourceId: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (activeSourceId) window.localStorage.setItem(ACTIVE_LS_KEY, activeSourceId);
+    else window.localStorage.removeItem(ACTIVE_LS_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export async function loadPersistedSession(): Promise<PersistedSession> {
   const empty: PersistedSession = {
     uploadedSources: [],
@@ -156,7 +176,10 @@ export async function loadPersistedSession(): Promise<PersistedSession> {
                 Object.entries(sourceOverrides).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
               )
             : {},
-        activeSourceId: typeof activeSourceId === 'string' ? activeSourceId : '',
+        activeSourceId:
+          typeof activeSourceId === 'string' && activeSourceId
+            ? activeSourceId
+            : readStoredActiveSourceId(),
       };
     }
 
@@ -177,6 +200,7 @@ export async function loadPersistedSession(): Promise<PersistedSession> {
 export async function savePersistedSession(session: PersistedSession): Promise<void> {
   if (typeof window === 'undefined' || typeof indexedDB === 'undefined') return;
 
+  writeStoredActiveSourceId(session.activeSourceId);
   await Promise.all([
     idbSet(UPLOADED_KEY, session.uploadedSources),
     idbSet(OVERRIDES_KEY, session.sourceOverrides),
