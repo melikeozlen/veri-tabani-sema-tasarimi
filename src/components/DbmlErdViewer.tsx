@@ -34,6 +34,7 @@ import { loadPersistedSession, savePersistedSession } from '../lib/sourcePersist
 import { updateSourceContent } from '../lib/auth';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
+import { dbmlModelToDdl, type DdlDialect } from '../lib/dbmlToDdl';
 import {
   applyThemeToDocument,
   isThemeId,
@@ -2256,6 +2257,8 @@ function DbmlErdViewerContent({
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
   const [pngExporting, setPngExporting] = useState(false);
+  const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement | null>(null);
   const marqueeStartRef = useRef<{ x: number; y: number } | null>(null);
   const marqueeActiveRef = useRef(false);
   const hoverClearTimerRef = useRef<number | null>(null);
@@ -2341,6 +2344,7 @@ function DbmlErdViewerContent({
 
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-toolbar-open', toolbarOpen ? '1' : '0');
+    if (!toolbarOpen) setDownloadMenuOpen(false);
   }, [toolbarOpen]);
 
   useEffect(() => {
@@ -2475,6 +2479,28 @@ function DbmlErdViewerContent({
       window.removeEventListener('scroll', handleReposition, true);
     };
   }, [sourceMenuId]);
+
+  useEffect(() => {
+    if (!downloadMenuOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (downloadMenuRef.current?.contains(target)) return;
+      setDownloadMenuOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setDownloadMenuOpen(false);
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [downloadMenuOpen]);
 
   useEffect(() => {
     function focusSearchInput() {
@@ -2684,6 +2710,7 @@ function DbmlErdViewerContent({
     setGroupByOpen(false);
     setWarningsOpen(false);
     setDataModalTableId(null);
+    setDownloadMenuOpen(false);
   }, [dbml]);
 
   const deferredSearchTerm = useDeferredValue(searchTerm);
@@ -3094,6 +3121,7 @@ function DbmlErdViewerContent({
   }
 
   function handleExport() {
+    setDownloadMenuOpen(false);
     if (!activeSource?.content.trim()) {
       setLinkError(t('sources.noExport'));
       return;
@@ -3102,6 +3130,31 @@ function DbmlErdViewerContent({
     const baseName = (activeSource.name || 'export').replace(/\.(dbml|txt)$/i, '') || 'export';
     downloadTextFile(activeSource.content, `${baseName}.dbml`);
     setLinkError(null);
+  }
+
+  function handleExportDdl(dialect: DdlDialect) {
+    setDownloadMenuOpen(false);
+    if (!activeSource?.content.trim()) {
+      setLinkError(t('sources.noExport'));
+      return;
+    }
+
+    try {
+      const parsed = parseDbml(activeSource.content);
+      if (parsed.tables.length === 0) {
+        setError(t('export.ddlEmpty'));
+        return;
+      }
+
+      const sql = dbmlModelToDdl(parsed, dialect, activeSource.name);
+      const baseName = (activeSource.name || 'export').replace(/\.(dbml|txt)$/i, '') || 'export';
+      const suffix = dialect === 'postgres' ? 'postgres.sql' : 'mssql.sql';
+      downloadTextFile(sql, `${baseName}.${suffix}`);
+      setLinkError(null);
+      setError(null);
+    } catch {
+      setError(t('export.ddlFailed'));
+    }
   }
 
   async function handleRefreshSources() {
@@ -3120,6 +3173,7 @@ function DbmlErdViewerContent({
   }
 
   async function handleExportPng() {
+    setDownloadMenuOpen(false);
     const currentNodes = getNodes().filter((node) => !node.hidden);
     if (currentNodes.length === 0) {
       setError(t('export.pngEmpty'));
@@ -4210,26 +4264,66 @@ function DbmlErdViewerContent({
                   <button type="button" className="dbml-toolbar__button" onClick={focusSearchResult}>
                     {t('toolbar.focusResult')}
                   </button>
-                  <button
-                    type="button"
-                    className="dbml-toolbar__button dbml-toolbar__button--export-dbml"
-                    onClick={handleExport}
-                    disabled={!activeSource?.content.trim()}
-                    title={t('sources.exportTitle')}
-                    aria-label={t('sources.exportTitle')}
-                  >
-                    <ExportIcon />
-                    <span>{t('sources.export')}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="dbml-toolbar__button dbml-toolbar__button--primary"
-                    onClick={() => void handleExportPng()}
-                    disabled={pngExporting || nodes.length === 0}
-                    title={t('export.pngTitle')}
-                  >
-                    {pngExporting ? t('export.pngSaving') : t('export.png')}
-                  </button>
+                  <div className="dbml-toolbar__download" ref={downloadMenuRef}>
+                    <button
+                      type="button"
+                      className={`dbml-toolbar__button dbml-toolbar__button--primary dbml-toolbar__button--export-dbml${downloadMenuOpen ? ' is-active' : ''}`}
+                      onClick={() => setDownloadMenuOpen((open) => !open)}
+                      disabled={pngExporting || (!activeSource?.content.trim() && nodes.length === 0)}
+                      title={t('export.downloadTitle')}
+                      aria-label={t('export.downloadTitle')}
+                      aria-haspopup="menu"
+                      aria-expanded={downloadMenuOpen}
+                    >
+                      <ExportIcon />
+                      <span>{pngExporting ? t('export.pngSaving') : t('export.download')}</span>
+                      {!pngExporting && <ChevronIcon direction={downloadMenuOpen ? 'up' : 'down'} />}
+                    </button>
+                    {downloadMenuOpen && (
+                      <div className="dbml-toolbar__download-menu" role="menu" aria-label={t('export.downloadMenu')}>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          title={t('sources.exportTitle')}
+                          disabled={!activeSource?.content.trim()}
+                          onClick={handleExport}
+                        >
+                          <strong>{t('sources.export')}</strong>
+                          <span>{t('export.dbmlHint')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          title={t('export.pngTitle')}
+                          disabled={pngExporting || nodes.length === 0}
+                          onClick={() => void handleExportPng()}
+                        >
+                          <strong>{t('export.png')}</strong>
+                          <span>{t('export.pngHint')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          title={t('export.postgresTitle')}
+                          disabled={!activeSource?.content.trim()}
+                          onClick={() => handleExportDdl('postgres')}
+                        >
+                          <strong>{t('export.postgres')}</strong>
+                          <span>{t('export.postgresHint')}</span>
+                        </button>
+                        <button
+                          type="button"
+                          role="menuitem"
+                          title={t('export.mssqlTitle')}
+                          disabled={!activeSource?.content.trim()}
+                          onClick={() => handleExportDdl('mssql')}
+                        >
+                          <strong>{t('export.mssql')}</strong>
+                          <span>{t('export.mssqlHint')}</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <button
                     type="button"
                     className="dbml-toolbar__collapse"

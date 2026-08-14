@@ -2891,10 +2891,66 @@ body.dbml-resizing-side * {
 }
 
 .dbml-toolbar__button--export-dbml span {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  opacity: 0.8;
+}
+
+.dbml-toolbar__download {
+  position: relative;
+}
+
+.dbml-toolbar__download-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 80;
+  min-width: 188px;
+  padding: 4px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 8px;
+  background: var(--dbml-panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dbml-toolbar__download-menu button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dbml-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbml-toolbar__download-menu button:hover:not(:disabled) {
+  background: var(--dbml-hover);
+  color: var(--dbml-text-strong);
+}
+
+.dbml-toolbar__download-menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dbml-toolbar__download-menu strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dbml-toolbar__download-menu span {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.72;
 }
 
 .dbml-toolbar__button--primary {
@@ -3388,8 +3444,14 @@ body.dbml-resizing-side * {
     flex: 1;
   }
 
-  .dbml-toolbar__button--primary {
+  .dbml-toolbar__download {
     grid-column: 1 / -1;
+    min-width: 0;
+  }
+
+  .dbml-toolbar__download .dbml-toolbar__button {
+    width: 100%;
+    justify-content: center;
   }
 }
 
