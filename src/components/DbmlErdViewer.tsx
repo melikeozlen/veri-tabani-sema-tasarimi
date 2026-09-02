@@ -36,6 +36,21 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
 import { dbmlModelToDdl, type DdlDialect } from '../lib/dbmlToDdl';
 import {
+  buildLinkedTableIdsByKind,
+  collectObjectTableRefs,
+  extractSqlTableRefs,
+  indexObjectsByTable,
+  resolveTableId,
+  tableMatchesObjectSearch,
+  type TableRefInfo,
+} from '../lib/indexTableObjects';
+import {
+  filterSqlObjectsByKind,
+  parseDbmlObjects,
+  type DbmlObjectKind,
+  type DbmlSqlObject,
+} from '../lib/parseDbmlObjects';
+import {
   applyThemeToDocument,
   isThemeId,
   THEME_META,
@@ -50,7 +65,7 @@ import {
 
 type Cardinality = '1' | 'N';
 type RelationOperator = '>' | '<' | '-' | '<>';
-type SearchScope = 'schema' | 'group' | 'table' | 'column';
+type SearchScope = 'schema' | 'group' | 'table' | 'column' | 'object';
 
 /** DBML ilişki operatörlerini normalize eder (?> / <? / -< vb. dahil). */
 function normalizeRelationOperator(raw: string): RelationOperator | null {
@@ -67,7 +82,7 @@ function normalizeRelationOperator(raw: string): RelationOperator | null {
 
 const RELATION_OPERATOR_PATTERN = '<>|<\\?|\\?>|><|-<|>-|-o<|>o-|-\\*|\\*-|->|<-|--|>|<|-';
 
-const ALL_SEARCH_SCOPES: SearchScope[] = ['schema', 'group', 'table', 'column'];
+const ALL_SEARCH_SCOPES: SearchScope[] = ['schema', 'group', 'table', 'column', 'object'];
 
 type SearchScopeFilter = SearchScope | 'all';
 
@@ -80,6 +95,7 @@ const SEARCH_SCOPE_OPTIONS: Array<{
   { id: 'group', labelKey: 'search.scope.groupName' },
   { id: 'table', labelKey: 'search.scope.tableName' },
   { id: 'column', labelKey: 'search.scope.columnName' },
+  { id: 'object', labelKey: 'search.scope.objectName' },
 ];
 
 function scopesFromFilter(filter: SearchScopeFilter): SearchScope[] {
@@ -157,6 +173,10 @@ interface TableNodeData extends Record<string, unknown> {
   searchScopes: SearchScope[];
   headerColor: string;
   onOpenTableData?: (tableId: string) => void;
+  tableObjects?: Partial<Record<DbmlObjectKind, DbmlSqlObject[]>>;
+  linkedTableIdsByKind?: Partial<Record<DbmlObjectKind, string[]>>;
+  onOpenSqlObject?: (object: DbmlSqlObject) => void;
+  onObjectKindHover?: (kind: DbmlObjectKind | null, linkedTableIds: string[] | null) => void;
 }
 
 type TableFlowNode = Node<TableNodeData, 'dbmlTable'>;
@@ -990,8 +1010,288 @@ function buildSampleRows(table: DbmlTable, rowCount = 4): Array<Record<string, s
   });
 }
 
+function ObjectKindIcon({ kind, size = 12 }: { kind: DbmlObjectKind; size?: number }) {
+  const common = {
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.6,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+  };
+  if (kind === 'view') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" {...common} />
+        <circle cx="12" cy="12" r="2.8" {...common} />
+      </svg>
+    );
+  }
+  if (kind === 'function') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <path d="M8 4v4M16 4v4M8 20v-4M16 20v-4M6 12h12" {...common} />
+      </svg>
+    );
+  }
+  if (kind === 'procedure') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+        <path d="M7 7h10v4H7zM7 13h6v4H7zM17 13h0" {...common} />
+        <path d="M5 5v14h14" {...common} />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <path d="M12 3v6M8 9h8M6 21h12M9 15h6" {...common} />
+    </svg>
+  );
+}
+
+const TABLE_OBJECT_KINDS: DbmlObjectKind[] = ['trigger', 'view', 'procedure', 'function'];
+
+const OBJECT_KIND_MESSAGE: Record<DbmlObjectKind, MessageKey> = {
+  function: 'objects.function',
+  view: 'objects.view',
+  procedure: 'objects.procedure',
+  trigger: 'objects.trigger',
+};
+
+function objectShortName(fullName: string): string {
+  return fullName.includes('.') ? fullName.slice(fullName.lastIndexOf('.') + 1) : fullName;
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function SqlLinkedCode({
+  object,
+  tableRefs,
+  onFocusTable,
+}: {
+  object: DbmlSqlObject;
+  tableRefs: TableRefInfo[];
+  onFocusTable: (tableId: string) => void;
+}) {
+  const segments = useMemo(() => {
+    const linkable = collectObjectTableRefs(object)
+      .map((ref) => ({ ref, tableId: resolveTableId(ref, tableRefs) }))
+      .filter((item): item is { ref: string; tableId: string } => Boolean(item.tableId))
+      .sort((a, b) => b.ref.length - a.ref.length);
+
+    if (linkable.length === 0) return [{ type: 'text' as const, value: object.sql }];
+
+    type Segment = { type: 'text'; value: string } | { type: 'table'; value: string; tableId: string };
+    let parts: Segment[] = [{ type: 'text', value: object.sql }];
+
+    for (const { ref, tableId } of linkable) {
+      const next: Segment[] = [];
+      for (const part of parts) {
+        if (part.type !== 'text') {
+          next.push(part);
+          continue;
+        }
+        const split = part.value.split(new RegExp(`(${escapeRegex(ref)})`, 'i'));
+        for (let index = 0; index < split.length; index += 1) {
+          const chunk = split[index];
+          if (!chunk) continue;
+          if (index % 2 === 1) {
+            next.push({ type: 'table', value: chunk, tableId });
+          } else {
+            next.push({ type: 'text', value: chunk });
+          }
+        }
+      }
+      parts = next;
+    }
+
+    return parts;
+  }, [object, tableRefs]);
+
+  return (
+    <pre className="dbml-sql-modal__code">
+      <code>
+        {segments.map((segment, index) =>
+          segment.type === 'table' ? (
+            <button
+              key={`${segment.tableId}-${index}`}
+              type="button"
+              className="dbml-sql-modal__table-link nodrag nopan"
+              title={getMessage('relation.goTable', { name: segment.value })}
+              onClick={() => onFocusTable(segment.tableId)}
+            >
+              {segment.value}
+            </button>
+          ) : (
+            <span key={index}>{segment.value}</span>
+          ),
+        )}
+      </code>
+    </pre>
+  );
+}
+
+function getViewerPortalRoot(): HTMLElement {
+  const root = document.querySelector('.dbml-erd-viewer');
+  if (root instanceof HTMLElement) return root;
+  return document.body;
+}
+
+function TableObjectIcons({
+  objects,
+  linkedTableIdsByKind,
+  onOpen,
+  onKindHover,
+}: {
+  objects: Partial<Record<DbmlObjectKind, DbmlSqlObject[]>>;
+  linkedTableIdsByKind?: Partial<Record<DbmlObjectKind, string[]>>;
+  onOpen: (object: DbmlSqlObject) => void;
+  onKindHover?: (kind: DbmlObjectKind | null, linkedTableIds: string[] | null) => void;
+}) {
+  const [openKind, setOpenKind] = useState<DbmlObjectKind | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const kinds = TABLE_OBJECT_KINDS.filter((kind) => (objects[kind]?.length ?? 0) > 0);
+
+  useEffect(() => {
+    if (!openKind) return;
+    function closeMenu() {
+      setOpenKind(null);
+      setMenuAnchor(null);
+    }
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as HTMLElement;
+      if (target.closest('.dbml-table-objects__chip')) return;
+      if (menuRef.current?.contains(target)) return;
+      closeMenu();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeMenu();
+    }
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [openKind]);
+
+  if (kinds.length === 0) return null;
+
+  const openItems = openKind ? objects[openKind] : undefined;
+  const menuFlipUp =
+    menuAnchor !== null &&
+    openItems !== undefined &&
+    menuAnchor.bottom + 44 + openItems.length * 34 > window.innerHeight - 12;
+
+  return (
+    <>
+      <div className="dbml-table-objects" aria-label={getMessage('objects.title')}>
+        {kinds.map((kind) => {
+          const items = objects[kind]!;
+          const isOpen = openKind === kind;
+          return (
+            <button
+              key={kind}
+              type="button"
+              className={`dbml-table-objects__chip nodrag nopan dbml-table-objects__chip--${kind}${isOpen ? ' is-open' : ''}`}
+              title={getMessage(OBJECT_KIND_MESSAGE[kind])}
+              aria-expanded={isOpen}
+              aria-haspopup="menu"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (isOpen) {
+                  setOpenKind(null);
+                  setMenuAnchor(null);
+                  return;
+                }
+                setOpenKind(kind);
+                setMenuAnchor(event.currentTarget.getBoundingClientRect());
+              }}
+              onMouseDown={(event) => event.stopPropagation()}
+              onMouseEnter={() => onKindHover?.(kind, linkedTableIdsByKind?.[kind] ?? null)}
+              onMouseLeave={() => onKindHover?.(null, null)}
+            >
+              <span className={`dbml-table-objects__chip-icon dbml-table-objects__chip-icon--${kind}`}>
+                <ObjectKindIcon kind={kind} size={12} />
+              </span>
+              {items.length > 1 && (
+                <span className="dbml-table-objects__count">{items.length}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      {openKind &&
+        openItems &&
+        menuAnchor &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className={`dbml-table-objects__menu dbml-table-objects__menu--${openKind}${menuFlipUp ? ' is-flip-up' : ''}`}
+            role="menu"
+            style={{
+              top: menuFlipUp ? menuAnchor.top - 6 : menuAnchor.bottom + 6,
+              left: Math.min(Math.max(8, menuAnchor.left), window.innerWidth - 268),
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header className="dbml-table-objects__menu-header">
+              <span className={`dbml-table-objects__menu-badge dbml-table-objects__menu-badge--${openKind}`}>
+                <ObjectKindIcon kind={openKind} />
+              </span>
+              <span className="dbml-table-objects__menu-title">{getMessage(OBJECT_KIND_MESSAGE[openKind])}</span>
+              <span className="dbml-table-objects__menu-count">{openItems.length}</span>
+            </header>
+            <ul className="dbml-table-objects__menu-list">
+              {openItems.map((item) => {
+                const shortName = objectShortName(item.fullName);
+                return (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className="dbml-table-objects__item nodrag nopan"
+                      role="menuitem"
+                      title={getMessage('objects.viewSql')}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setOpenKind(null);
+                        setMenuAnchor(null);
+                        onOpen(item);
+                      }}
+                    >
+                      <span className="dbml-table-objects__item-name">{shortName}</span>
+                      {item.fullName !== shortName && (
+                        <span className="dbml-table-objects__item-schema">{item.fullName}</span>
+                      )}
+                      <span className="dbml-table-objects__item-action">{getMessage('objects.viewSql')}</span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>,
+          getViewerPortalRoot(),
+        )}
+    </>
+  );
+}
+
 const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
-  const { table, foreignKeyFields, dimmed, searchTerm, searchScopes, headerColor, onOpenTableData } = data;
+  const {
+    table,
+    foreignKeyFields,
+    dimmed,
+    searchTerm,
+    searchScopes,
+    headerColor,
+    onOpenTableData,
+    tableObjects,
+    linkedTableIdsByKind,
+    onOpenSqlObject,
+    onObjectKindHover,
+  } = data;
   const searchLocale =
     typeof document !== 'undefined' && document.documentElement.lang === 'en' ? 'en-US' : 'tr-TR';
   const normalizedSearch = searchTerm.trim().toLocaleLowerCase(searchLocale);
@@ -1099,7 +1399,17 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
             </button>
           </div>
         </div>
-        <span className="dbml-table-node__count">{table.fields.length}</span>
+        <div className="dbml-table-node__header-actions">
+          {tableObjects && onOpenSqlObject && (
+            <TableObjectIcons
+              objects={tableObjects}
+              linkedTableIdsByKind={linkedTableIdsByKind}
+              onOpen={onOpenSqlObject}
+              onKindHover={onObjectKindHover}
+            />
+          )}
+          <span className="dbml-table-node__count">{table.fields.length}</span>
+        </div>
       </header>
 
       <div className="dbml-table-node__fields">
@@ -1811,6 +2121,55 @@ function ChevronIcon({ direction }: { direction: 'up' | 'down' }) {
   );
 }
 
+function ObjectSurfaceSwitch({
+  label,
+  hint,
+  sidebar,
+  diagram,
+  onSidebarChange,
+  onDiagramChange,
+  sidebarLabel,
+  diagramLabel,
+}: {
+  label: string;
+  hint?: string;
+  sidebar: boolean;
+  diagram: boolean;
+  onSidebarChange: (next: boolean) => void;
+  onDiagramChange: (next: boolean) => void;
+  sidebarLabel: string;
+  diagramLabel: string;
+}) {
+  return (
+    <div className="dbml-object-surface">
+      <span className="dbml-object-surface__label">
+        <span className="dbml-object-surface__title">{label}</span>
+        {hint ? <span className="dbml-object-surface__hint">{hint}</span> : null}
+      </span>
+      <span className="dbml-object-surface__toggles">
+        <button
+          type="button"
+          className={`dbml-object-surface__btn${sidebar ? ' is-on' : ''}`}
+          aria-pressed={sidebar}
+          title={sidebarLabel}
+          onClick={() => onSidebarChange(!sidebar)}
+        >
+          {sidebarLabel}
+        </button>
+        <button
+          type="button"
+          className={`dbml-object-surface__btn${diagram ? ' is-on' : ''}`}
+          aria-pressed={diagram}
+          title={diagramLabel}
+          onClick={() => onDiagramChange(!diagram)}
+        >
+          {diagramLabel}
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function MinimapSizeIcon({ compact }: { compact: boolean }) {
   return (
     <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
@@ -1940,9 +2299,14 @@ function matchesSearch(
   scopes: SearchScope[],
   groupName?: string,
   groupBy: 'schema' | 'tableGroup' = 'schema',
+  tableObjects?: Partial<Record<DbmlObjectKind, DbmlSqlObject[]>>,
 ): boolean {
   if (!normalizedSearch) return true;
   if (scopes.length === 0) return true;
+
+  if (scopes.includes('object') && tableMatchesObjectSearch(tableObjects, normalizedSearch)) {
+    return true;
+  }
 
   if (scopes.includes('schema')) {
     const schemaLabel = table.schema ?? (groupBy === 'schema' ? groupName ?? '' : '');
@@ -2013,6 +2377,53 @@ function sourceDisplayName(fileName: string): string {
 }
 
 const OPEN_SOURCE_FOLDERS_KEY = 'dbml-erd-open-source-folders';
+
+const OBJECT_KINDS: DbmlObjectKind[] = ['function', 'view', 'procedure', 'trigger'];
+
+const OBJECT_KIND_LABEL: Record<DbmlObjectKind, MessageKey> = {
+  function: 'objects.function',
+  view: 'objects.view',
+  procedure: 'objects.procedure',
+  trigger: 'objects.trigger',
+};
+
+const OBJECT_VISIBILITY_KEYS: Record<DbmlObjectKind, string> = {
+  function: 'dbml-erd-show-functions',
+  view: 'dbml-erd-show-views',
+  procedure: 'dbml-erd-show-procedures',
+  trigger: 'dbml-erd-show-triggers',
+};
+
+const OBJECT_SIDEBAR_VISIBILITY_KEYS: Record<DbmlObjectKind, string> = {
+  function: 'dbml-erd-sidebar-functions',
+  view: 'dbml-erd-sidebar-views',
+  procedure: 'dbml-erd-sidebar-procedures',
+  trigger: 'dbml-erd-sidebar-triggers',
+};
+
+const OBJECT_DIAGRAM_VISIBILITY_KEYS: Record<DbmlObjectKind, string> = {
+  function: 'dbml-erd-diagram-functions',
+  view: 'dbml-erd-diagram-views',
+  procedure: 'dbml-erd-diagram-procedures',
+  trigger: 'dbml-erd-diagram-triggers',
+};
+
+function readObjectSurfaceVisibility(
+  surface: 'sidebar' | 'diagram',
+  kind: DbmlObjectKind,
+): boolean {
+  if (typeof window === 'undefined') return true;
+  const key =
+    surface === 'sidebar'
+      ? OBJECT_SIDEBAR_VISIBILITY_KEYS[kind]
+      : OBJECT_DIAGRAM_VISIBILITY_KEYS[kind];
+  const stored = window.localStorage.getItem(key);
+  if (stored !== null) return stored === '1';
+
+  const legacy = window.localStorage.getItem(OBJECT_VISIBILITY_KEYS[kind]);
+  if (legacy !== null) return legacy === '1';
+  return true;
+}
 
 function readOpenSourceFolders(): Set<string> | null {
   if (typeof window === 'undefined') return null;
@@ -2192,9 +2603,30 @@ function DbmlErdViewerContent({
 
   const [nodes, setNodes, onNodesChange] = useNodesState<TableFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<RelationFlowEdge>([]);
+
   const [warnings, setWarnings] = useState<string[]>([]);
   const [enumCount, setEnumCount] = useState(0);
   const [tableGroups, setTableGroups] = useState<DbmlTableGroup[]>([]);
+  const [sqlObjects, setSqlObjects] = useState<DbmlSqlObject[]>([]);
+  const [objectSidebarVisibility, setObjectSidebarVisibility] = useState<Record<DbmlObjectKind, boolean>>(() => ({
+    function: readObjectSurfaceVisibility('sidebar', 'function'),
+    view: readObjectSurfaceVisibility('sidebar', 'view'),
+    procedure: readObjectSurfaceVisibility('sidebar', 'procedure'),
+    trigger: readObjectSurfaceVisibility('sidebar', 'trigger'),
+  }));
+  const [objectDiagramVisibility, setObjectDiagramVisibility] = useState<Record<DbmlObjectKind, boolean>>(() => ({
+    function: readObjectSurfaceVisibility('diagram', 'function'),
+    view: readObjectSurfaceVisibility('diagram', 'view'),
+    procedure: readObjectSurfaceVisibility('diagram', 'procedure'),
+    trigger: readObjectSurfaceVisibility('diagram', 'trigger'),
+  }));
+  const [sqlModalObject, setSqlModalObject] = useState<DbmlSqlObject | null>(null);
+  const [sqlCopyFlash, setSqlCopyFlash] = useState(false);
+  const [hoveredObjectLinkIds, setHoveredObjectLinkIds] = useState<Set<string> | null>(null);
+  const [objectFiltersOpen, setObjectFiltersOpen] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('dbml-erd-object-filters-open') !== '0';
+  });
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [searchScopeFilter, setSearchScopeFilter] = useState<SearchScopeFilter>('all');
@@ -2363,6 +2795,23 @@ function DbmlErdViewerContent({
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-right-width', String(rightSideWidth));
   }, [rightSideWidth]);
+
+  useEffect(() => {
+    for (const kind of OBJECT_KINDS) {
+      window.localStorage.setItem(
+        OBJECT_SIDEBAR_VISIBILITY_KEYS[kind],
+        objectSidebarVisibility[kind] ? '1' : '0',
+      );
+      window.localStorage.setItem(
+        OBJECT_DIAGRAM_VISIBILITY_KEYS[kind],
+        objectDiagramVisibility[kind] ? '1' : '0',
+      );
+    }
+  }, [objectDiagramVisibility, objectSidebarVisibility]);
+
+  useEffect(() => {
+    window.localStorage.setItem('dbml-erd-object-filters-open', objectFiltersOpen ? '1' : '0');
+  }, [objectFiltersOpen]);
 
   useEffect(() => {
     if (sourceFolderGroups.length === 0) return;
@@ -2666,12 +3115,14 @@ function DbmlErdViewerContent({
         const parsed = parseDbml(dbml);
         if (parsed.tables.length === 0) throw new Error(tRef.current('error.noTable'));
 
+        const objects = parseDbmlObjects(dbml);
         const graph = await buildFlowGraph(parsed, layoutDensity);
         if (cancelled) return;
 
         setWarnings(parsed.warnings);
         setEnumCount(parsed.enums.length);
         setTableGroups(parsed.tableGroups);
+        setSqlObjects(objects);
         setNodes(graph.nodes);
         setEdges(graph.edges);
 
@@ -2688,6 +3139,7 @@ function DbmlErdViewerContent({
         setError(caughtError instanceof Error ? caughtError.message : tRef.current('error.render'));
         setEnumCount(0);
         setTableGroups([]);
+        setSqlObjects([]);
         setNodes([]);
         setEdges([]);
       }
@@ -2714,6 +3166,8 @@ function DbmlErdViewerContent({
     setWarningsOpen(false);
     setDataModalTableId(null);
     setDownloadMenuOpen(false);
+    setSqlModalObject(null);
+    setHoveredObjectLinkIds(null);
   }, [dbml]);
 
   const deferredSearchTerm = useDeferredValue(searchTerm);
@@ -2722,6 +3176,21 @@ function DbmlErdViewerContent({
   const searchLocale = locale === 'en' ? 'en-US' : 'tr-TR';
   const normalizedSearch = deferredSearchTerm.trim().toLocaleLowerCase(searchLocale);
 
+  useEffect(() => {
+    if (!sqlModalObject) setSqlCopyFlash(false);
+  }, [sqlModalObject]);
+
+  useEffect(() => {
+    if (!normalizedSearch || sqlObjects.length === 0) return;
+    if (!searchScopes.includes('object') && searchScopeFilter !== 'all') return;
+    const matchesObject = sqlObjects.some((item) =>
+      `${item.fullName} ${item.tableRef ?? ''} ${item.kind}`
+        .toLocaleLowerCase(searchLocale)
+        .includes(normalizedSearch),
+    );
+    if (matchesObject) setObjectFiltersOpen(true);
+  }, [normalizedSearch, searchLocale, searchScopeFilter, searchScopes, sqlObjects]);
+
   const navigatorGroups = useMemo(() => {
     const tables = nodes.map((node) => node.data.table);
     const corporate = isCorporateTheme(theme);
@@ -2729,6 +3198,27 @@ function DbmlErdViewerContent({
       ? groupTablesByTableGroup(tables, tableGroups, corporate)
       : groupTablesBySchema(tables, corporate);
   }, [groupBy, nodes, tableGroups, theme]);
+
+  const tableRefs = useMemo(
+    (): TableRefInfo[] =>
+      nodes.map((node) => ({
+        id: node.id,
+        schema: node.data.table.schema,
+        name: node.data.table.name,
+        fullName: node.data.table.fullName,
+      })),
+    [nodes],
+  );
+
+  const objectsByTableSidebar = useMemo(
+    () =>
+      indexObjectsByTable(
+        filterSqlObjectsByKind(sqlObjects, objectSidebarVisibility),
+        tableRefs,
+        objectSidebarVisibility,
+      ),
+    [sqlObjects, objectSidebarVisibility, tableRefs],
+  );
 
   const filteredNavigatorGroups = useMemo(() => {
     if (!normalizedSearch) return navigatorGroups;
@@ -2747,12 +3237,26 @@ function DbmlErdViewerContent({
           tables: groupMatch
             ? group.tables
             : group.tables.filter((table) =>
-                matchesSearch(table, normalizedSearch, searchScopes, group.name, groupBy),
+                matchesSearch(
+                  table,
+                  normalizedSearch,
+                  searchScopes,
+                  group.name,
+                  groupBy,
+                  objectsByTableSidebar.get(table.id),
+                ),
               ),
         };
       })
       .filter((group) => group.tables.length > 0);
-  }, [groupBy, navigatorGroups, normalizedSearch, searchLocale, searchScopes]);
+  }, [
+    groupBy,
+    navigatorGroups,
+    normalizedSearch,
+    objectsByTableSidebar,
+    searchLocale,
+    searchScopes,
+  ]);
 
   const tableGroupNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -2763,6 +3267,47 @@ function DbmlErdViewerContent({
     }
     return map;
   }, [navigatorGroups]);
+
+  const objectCounts = useMemo(() => {
+    const counts: Record<DbmlObjectKind, number> = {
+      function: 0,
+      view: 0,
+      procedure: 0,
+      trigger: 0,
+    };
+    for (const item of sqlObjects) counts[item.kind] += 1;
+    return counts;
+  }, [sqlObjects]);
+
+  const visibleSqlObjects = useMemo(() => {
+    const visible = filterSqlObjectsByKind(sqlObjects, objectSidebarVisibility);
+    if (!normalizedSearch) return visible;
+    const searchObjects = searchScopes.includes('object') || searchScopeFilter === 'all';
+    if (!searchObjects) return visible;
+    return visible.filter((item) =>
+      `${item.fullName} ${item.tableRef ?? ''} ${item.kind}`
+        .toLocaleLowerCase(searchLocale)
+        .includes(normalizedSearch),
+    );
+  }, [
+    normalizedSearch,
+    objectSidebarVisibility,
+    searchLocale,
+    searchScopeFilter,
+    searchScopes,
+    sqlObjects,
+  ]);
+
+  const visibleSqlObjectsByKind = useMemo(() => {
+    const groups: Record<DbmlObjectKind, DbmlSqlObject[]> = {
+      function: [],
+      view: [],
+      procedure: [],
+      trigger: [],
+    };
+    for (const item of visibleSqlObjects) groups[item.kind].push(item);
+    return groups;
+  }, [visibleSqlObjects]);
 
   const visibleTableCount = nodes.length - hiddenTableIds.size;
 
@@ -2819,23 +3364,59 @@ function DbmlErdViewerContent({
 
   const corporateTheme = isCorporateTheme(theme);
 
+  const diagramSqlObjects = useMemo(
+    () => filterSqlObjectsByKind(sqlObjects, objectDiagramVisibility),
+    [sqlObjects, objectDiagramVisibility],
+  );
+
+  const objectsByTable = useMemo(
+    () => indexObjectsByTable(diagramSqlObjects, tableRefs, objectDiagramVisibility),
+    [diagramSqlObjects, objectDiagramVisibility, tableRefs],
+  );
+
+  const openSqlObject = useCallback((object: DbmlSqlObject) => {
+    setSqlModalObject(object);
+  }, []);
+
+  const handleObjectKindHover = useCallback(
+    (_kind: DbmlObjectKind | null, linkedTableIds: string[] | null) => {
+      if (!linkedTableIds?.length) {
+        setHoveredObjectLinkIds(null);
+        return;
+      }
+      setHoveredObjectLinkIds(new Set(linkedTableIds));
+    },
+    [],
+  );
+
   const visibleNodes = useMemo(() => {
     return nodes.map((node) => {
+      const tableObjects = objectsByTable.get(node.id);
+      const objectSearchHit = tableMatchesObjectSearch(tableObjects, normalizedSearch);
       const searchMismatch =
         normalizedSearch.length > 0 &&
+        !objectSearchHit &&
         !matchesSearch(
           node.data.table,
           normalizedSearch,
           searchScopes,
           tableGroupNameById.get(node.id),
           groupBy,
+          tableObjects,
         );
       const searchHit = normalizedSearch.length > 0 && !searchMismatch;
       const relationMismatch = selectedTable !== null && !connectedTableIds.has(node.id);
       const hoverActive =
         deferredHoveredTableId !== null || deferredHoveredEdgeId !== null || pinnedEdgeId !== null;
+      const objectLinkHover = hoveredObjectLinkIds !== null;
+      const objectLinkHit = hoveredObjectLinkIds?.has(node.id) ?? false;
       const hoverDim =
-        hoverActive && !selectedTable && !hoverConnectedIds.has(node.id) && !searchHit;
+        hoverActive &&
+        !selectedTable &&
+        !hoverConnectedIds.has(node.id) &&
+        !searchHit &&
+        !(objectLinkHover && objectLinkHit);
+
       const isHidden = hiddenTableIds.has(node.id);
 
       return {
@@ -2848,6 +3429,10 @@ function DbmlErdViewerContent({
           searchScopes,
           headerColor: headerColorForTable(node.data.table, groupBy, corporateTheme),
           onOpenTableData: openTableData,
+          tableObjects,
+          linkedTableIdsByKind: buildLinkedTableIdsByKind(tableObjects, tableRefs),
+          onOpenSqlObject: openSqlObject,
+          onObjectKindHover: handleObjectKindHover,
         },
       };
     });
@@ -2858,15 +3443,20 @@ function DbmlErdViewerContent({
     deferredHoveredTableId,
     deferredSearchTerm,
     groupBy,
+    handleObjectKindHover,
     hiddenTableIds,
     hoverConnectedIds,
+    hoveredObjectLinkIds,
     nodes,
     normalizedSearch,
+    objectsByTable,
+    openSqlObject,
     openTableData,
     pinnedEdgeId,
     searchScopes,
     selectedTable,
     tableGroupNameById,
+    tableRefs,
   ]);
 
   function downloadSampleCsv() {
@@ -2914,6 +3504,21 @@ function DbmlErdViewerContent({
     },
     [focusTables],
   );
+
+  const focusTableFromSqlModal = useCallback(
+    (tableId: string) => {
+      setSqlModalObject(null);
+      selectAndFocusTable(tableId);
+    },
+    [selectAndFocusTable],
+  );
+
+  const sqlModalLinkedTables = useMemo(() => {
+    if (!sqlModalObject) return [];
+    return collectObjectTableRefs(sqlModalObject)
+      .map((ref) => ({ ref, tableId: resolveTableId(ref, tableRefs) }))
+      .filter((item): item is { ref: string; tableId: string } => Boolean(item.tableId));
+  }, [sqlModalObject, tableRefs]);
 
   const clearPinnedEdge = useCallback(() => {
     setPinnedEdgeId(null);
@@ -3149,7 +3754,20 @@ function DbmlErdViewerContent({
         return;
       }
 
-      const sql = dbmlModelToDdl(parsed, dialect, activeSource.name);
+      let sql = dbmlModelToDdl(parsed, dialect, activeSource.name);
+      const exportVisibility = OBJECT_KINDS.reduce(
+        (acc, kind) => {
+          acc[kind] = objectSidebarVisibility[kind] || objectDiagramVisibility[kind];
+          return acc;
+        },
+        {} as Record<DbmlObjectKind, boolean>,
+      );
+      const extraObjects = filterSqlObjectsByKind(parseDbmlObjects(activeSource.content), exportVisibility);
+      if (extraObjects.length > 0) {
+        const separator = dialect === 'mssql' ? '\nGO\n\n' : '\n\n';
+        const objectSql = extraObjects.map((item) => item.sql.trim()).join(separator);
+        sql = `${sql.trim()}\n\n-- ${dialect === 'mssql' ? 'Objects' : 'objects'}\n\n${objectSql}${dialect === 'mssql' ? '\nGO\n' : '\n'}`;
+      }
       const baseName = (activeSource.name || 'export').replace(/\.(dbml|txt)$/i, '') || 'export';
       const suffix = dialect === 'postgres' ? 'postgres.sql' : 'mssql.sql';
       downloadTextFile(sql, `${baseName}.${suffix}`);
@@ -4408,7 +5026,8 @@ function DbmlErdViewerContent({
           </button>
         </div>
 
-        <div className="dbml-side__body">
+        <div className="dbml-side__body dbml-side__body--explorer">
+          <div className="dbml-side__controls">
           <label className="dbml-search-select">
             <span className="dbml-search-select__label">{t('search.filter')}</span>
             <select
@@ -4441,7 +5060,110 @@ function DbmlErdViewerContent({
               </button>
             )}
           </label>
-          <p className="dbml-search__shortcut" aria-hidden="true">
+
+          <section
+            className={`dbml-object-filters${objectFiltersOpen ? ' is-open' : ''}`}
+            aria-label={t('objects.title')}
+          >
+            <button
+              type="button"
+              className="dbml-object-filters__toggle"
+              onClick={() => setObjectFiltersOpen((open) => !open)}
+              aria-expanded={objectFiltersOpen}
+              title={objectFiltersOpen ? t('objects.collapse') : t('objects.expand')}
+            >
+              <span className="dbml-object-filters__title">{t('objects.title')}</span>
+              {sqlObjects.length > 0 && (
+                <span className="dbml-object-filters__count">
+                  {normalizedSearch && visibleSqlObjects.length < sqlObjects.length
+                    ? `${visibleSqlObjects.length}/${sqlObjects.length}`
+                    : t('objects.count', { count: sqlObjects.length })}
+                </span>
+              )}
+              <span className="dbml-object-filters__chevron" aria-hidden="true">
+                {objectFiltersOpen ? '▴' : '▾'}
+              </span>
+            </button>
+
+            {objectFiltersOpen && (
+              <div className="dbml-object-filters__body">
+                <div className="dbml-object-filters__list">
+                  {OBJECT_KINDS.map((kind) => (
+                    <ObjectSurfaceSwitch
+                      key={kind}
+                      label={t(OBJECT_KIND_LABEL[kind])}
+                      hint={objectCounts[kind] > 0 ? String(objectCounts[kind]) : undefined}
+                      sidebar={objectSidebarVisibility[kind]}
+                      diagram={objectDiagramVisibility[kind]}
+                      sidebarLabel={t('objects.surfaceSidebar')}
+                      diagramLabel={t('objects.surfaceDiagram')}
+                      onSidebarChange={(next) =>
+                        setObjectSidebarVisibility((current) => ({ ...current, [kind]: next }))
+                      }
+                      onDiagramChange={(next) =>
+                        setObjectDiagramVisibility((current) => ({ ...current, [kind]: next }))
+                      }
+                    />
+                  ))}
+                </div>
+
+                {visibleSqlObjects.length > 0 && (
+                  <div className="dbml-object-tree">
+                    {OBJECT_KINDS.map((kind) => {
+                      const items = visibleSqlObjectsByKind[kind];
+                      if (items.length === 0 || !objectSidebarVisibility[kind]) return null;
+                      return (
+                        <section key={kind} className="dbml-object-group">
+                          <header className="dbml-object-group__header">
+                            <ObjectKindIcon kind={kind} />
+                            <span>{t(OBJECT_KIND_LABEL[kind])}</span>
+                            <span className="dbml-object-group__count">{items.length}</span>
+                          </header>
+                          <ul className="dbml-object-group__list">
+                            {items.map((item) => (
+                              <li key={item.id}>
+                                <button
+                                  type="button"
+                                  className="dbml-object-group__item"
+                                  title={t('objects.viewSql')}
+                                  onClick={() => {
+                                    setSqlModalObject(item);
+                                    const tableId =
+                                      (item.tableRef
+                                        ? resolveTableId(item.tableRef, tableRefs)
+                                        : null) ??
+                                      extractSqlTableRefs(item.sql)
+                                        .map((ref) => resolveTableId(ref, tableRefs))
+                                        .find(Boolean);
+                                    if (tableId) selectAndFocusTable(tableId);
+                                  }}
+                                >
+                                  <span className="dbml-object-group__name">{item.fullName}</span>
+                                  {item.tableRef && (
+                                    <span className="dbml-object-group__meta">
+                                      {t('objects.onTable', { name: item.tableRef })}
+                                    </span>
+                                  )}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </section>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {sqlObjects.length > 0 && visibleSqlObjects.length === 0 && (
+                  <div className="dbml-side__empty dbml-object-tree__empty">
+                    {t('objects.noneVisible')}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          <p className="dbml-search__shortcut dbml-search__shortcut--compact" aria-hidden="true">
             {t('search.shortcutHint', {
               keys:
                 typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform)
@@ -4548,7 +5270,9 @@ function DbmlErdViewerContent({
               </div>
             )}
           </div>
+          </div>
 
+          <div className="dbml-side__scroll">
           <div className="dbml-schema-tree">
             {filteredNavigatorGroups.map((group) => {
               const collapsed = collapsedGroups.has(group.id) && !normalizedSearch;
@@ -4657,6 +5381,7 @@ function DbmlErdViewerContent({
                   : t('empty.noMatch')}
               </div>
             )}
+          </div>
           </div>
         </div>
       </aside>
@@ -4822,6 +5547,78 @@ function DbmlErdViewerContent({
                 </tbody>
               </table>
             </div>
+          </div>
+        </div>
+      )}
+
+      {sqlModalObject && (
+        <div
+          className="dbml-data-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('objects.modalTitle')}
+          onClick={() => setSqlModalObject(null)}
+        >
+          <div className="dbml-data-modal__panel dbml-sql-modal__panel nodrag nopan" onClick={(event) => event.stopPropagation()}>
+            <div className="dbml-data-modal__header">
+              <div className="dbml-data-modal__title-wrap">
+                <span className="dbml-data-modal__table-icon" aria-hidden="true">
+                  <ObjectKindIcon kind={sqlModalObject.kind} />
+                </span>
+                <div>
+                  <div className="dbml-data-modal__eyebrow">{t(OBJECT_KIND_LABEL[sqlModalObject.kind])}</div>
+                  <h3>{sqlModalObject.fullName}</h3>
+                </div>
+              </div>
+              <div className="dbml-data-modal__actions">
+                <button
+                  type="button"
+                  className={`dbml-toolbar__button${sqlCopyFlash ? ' is-copied' : ''}`}
+                  onClick={() => {
+                    void navigator.clipboard.writeText(sqlModalObject.sql).then(() => {
+                      setSqlCopyFlash(true);
+                      window.setTimeout(() => setSqlCopyFlash(false), 280);
+                    });
+                  }}
+                >
+                  {sqlCopyFlash ? t('objects.copySqlDone') : t('objects.copySql')}
+                </button>
+                <button
+                  type="button"
+                  className="dbml-toolbar__button"
+                  onClick={() => setSqlModalObject(null)}
+                  aria-label={t('data.close')}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            {sqlModalLinkedTables.length > 0 && (
+              <p className="dbml-sql-modal__tables">
+                <span className="dbml-sql-modal__tables-label">{t('objects.linkedTables')}</span>
+                {sqlModalLinkedTables.map(({ ref, tableId }, index) => {
+                  const shortName = ref.includes('.') ? ref.slice(ref.lastIndexOf('.') + 1) : ref;
+                  return (
+                    <span key={ref} className="dbml-sql-modal__tables-item">
+                      {index > 0 && <span className="dbml-sql-modal__tables-sep" aria-hidden="true">·</span>}
+                      <button
+                        type="button"
+                        className="dbml-sql-modal__table-chip nodrag nopan"
+                        title={t('relation.goTable', { name: ref })}
+                        onClick={() => focusTableFromSqlModal(tableId)}
+                      >
+                        {shortName}
+                      </button>
+                    </span>
+                  );
+                })}
+              </p>
+            )}
+            <SqlLinkedCode
+              object={sqlModalObject}
+              tableRefs={tableRefs}
+              onFocusTable={focusTableFromSqlModal}
+            />
           </div>
         </div>
       )}

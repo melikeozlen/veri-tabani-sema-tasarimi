@@ -830,6 +830,34 @@ body.dbml-resizing-side * {
   scrollbar-gutter: stable;
 }
 
+.dbml-side__body--explorer {
+  gap: 6px;
+  overflow: hidden;
+}
+
+.dbml-side__controls {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  max-height: min(52vh, 420px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.dbml-side__scroll {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .dbml-side__dock {
   flex: 0 0 auto;
   display: grid;
@@ -1051,6 +1079,580 @@ body.dbml-resizing-side * {
 
 .dbml-edge-info-toggle.is-on .dbml-edge-info-toggle__knob {
   left: 18px;
+}
+
+.dbml-object-filters {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dbml-border);
+  border-radius: 8px;
+  background: var(--dbml-surface-2);
+  overflow: hidden;
+}
+
+.dbml-object-filters__toggle {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  color: var(--dbml-text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbml-object-filters__toggle:hover {
+  background: var(--dbml-hover);
+}
+
+.dbml-object-filters__title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dbml-muted);
+}
+
+.dbml-object-filters__count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dbml-muted);
+}
+
+.dbml-object-filters__chevron {
+  flex-shrink: 0;
+  color: var(--dbml-muted);
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.dbml-object-filters__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 6px 6px;
+  max-height: min(220px, 32vh);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.dbml-object-filters__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dbml-object-surface {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 7px;
+  background: var(--dbml-panel);
+}
+
+.dbml-object-surface__label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dbml-object-surface__title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.dbml-object-surface__hint {
+  color: var(--dbml-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.dbml-object-surface__toggles {
+  display: inline-flex;
+  flex-shrink: 0;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--dbml-surface-2);
+}
+
+.dbml-object-surface__btn {
+  min-width: 28px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--dbml-muted);
+  background: transparent;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.dbml-object-surface__btn:hover {
+  color: var(--dbml-text);
+  background: var(--dbml-hover);
+}
+
+.dbml-object-surface__btn.is-on {
+  color: var(--dbml-accent);
+  background: var(--dbml-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--dbml-accent-border);
+}
+
+.dbml-object-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 7px;
+  color: var(--dbml-text);
+  background: var(--dbml-panel);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbml-object-toggle:hover {
+  border-color: var(--dbml-accent);
+}
+
+.dbml-object-toggle__text {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dbml-object-toggle__title {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.dbml-object-toggle__hint {
+  color: var(--dbml-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.dbml-object-toggle__switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--dbml-border);
+}
+
+.dbml-object-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.dbml-object-toggle.is-on .dbml-object-toggle__switch {
+  background: var(--dbml-accent);
+}
+
+.dbml-object-toggle.is-on .dbml-object-toggle__knob {
+  left: 18px;
+}
+
+.dbml-object-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dbml-object-tree__empty {
+  margin: 0;
+}
+
+.dbml-object-group {
+  border: 1px solid var(--dbml-border);
+  border-radius: 8px;
+  background: var(--dbml-surface-2);
+  overflow: hidden;
+}
+
+.dbml-object-group__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dbml-border);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--dbml-text-strong);
+}
+
+.dbml-object-group__count {
+  margin-left: auto;
+  color: var(--dbml-muted);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.dbml-object-group__list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.dbml-object-group__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dbml-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbml-object-group__item:hover {
+  background: var(--dbml-hover);
+  color: var(--dbml-text-strong);
+}
+
+.dbml-object-group__name {
+  font-size: 11px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.dbml-object-group__meta {
+  font-size: 10px;
+  color: var(--dbml-muted);
+}
+
+.dbml-table-objects {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+
+.dbml-table-node__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.dbml-table-objects__chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 1px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--header-fg, #fff);
+  box-shadow: none;
+  cursor: pointer;
+  opacity: 0.82;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.dbml-table-objects__chip:hover,
+.dbml-table-objects__chip.is-open {
+  opacity: 1;
+  background: color-mix(in srgb, var(--dbml-bg, #0f1419) 55%, transparent);
+}
+
+.dbml-table-objects__chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.dbml-table-objects__chip-icon--view {
+  color: #93c5fd;
+}
+
+.dbml-table-objects__chip-icon--function {
+  color: #c4b5fd;
+}
+
+.dbml-table-objects__chip-icon--procedure {
+  color: #fcd34d;
+}
+
+.dbml-table-objects__chip-icon--trigger {
+  color: #fca5a5;
+}
+
+.dbml-table-objects__count {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dbml-bg, #0f1419) 90%, transparent);
+  color: var(--header-fg, #fff);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 13px;
+  text-align: center;
+}
+
+.dbml-table-objects__menu {
+  position: fixed;
+  z-index: 10050;
+  width: min(260px, calc(100vw - 16px));
+  overflow: hidden;
+  border: 1px solid var(--dbml-border, #2a3340);
+  border-radius: 10px;
+  background: var(--dbml-panel, #161b22);
+  color: var(--dbml-text, #e6edf3);
+  box-shadow:
+    0 16px 40px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  pointer-events: auto;
+  backdrop-filter: blur(10px);
+}
+
+.dbml-table-objects__menu.is-flip-up {
+  transform: translateY(-100%);
+}
+
+.dbml-table-objects__menu-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--dbml-border, #2a3340);
+  background: var(--dbml-surface, #1c222b);
+}
+
+.dbml-table-objects__menu-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--dbml-surface-2, #222933);
+}
+
+.dbml-table-objects__menu-badge--view {
+  color: #60a5fa;
+}
+
+.dbml-table-objects__menu-badge--function {
+  color: #a78bfa;
+}
+
+.dbml-table-objects__menu-badge--procedure {
+  color: #fbbf24;
+}
+
+.dbml-table-objects__menu-badge--trigger {
+  color: #f87171;
+}
+
+.dbml-table-objects__menu-title {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--dbml-text-strong, #f0f3f6);
+}
+
+.dbml-table-objects__menu-count {
+  min-width: 18px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--dbml-surface-2, #222933);
+  color: var(--dbml-muted, #8b949e);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.dbml-table-objects__menu-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: min(240px, 40vh);
+  overflow: auto;
+  background: var(--dbml-panel, #161b22);
+}
+
+.dbml-table-objects__item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--dbml-surface, #1c222b);
+  color: var(--dbml-text, #e6edf3);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.dbml-table-objects__item:hover {
+  background: var(--dbml-surface-2, #222933);
+}
+
+.dbml-table-objects__item-name {
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--dbml-text-strong, #f0f3f6);
+}
+
+.dbml-table-objects__item-schema {
+  font-size: 10px;
+  line-height: 1.25;
+  color: var(--dbml-muted, #8b949e);
+  word-break: break-all;
+}
+
+.dbml-table-objects__item-action {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dbml-accent, #3d8fd1);
+}
+
+.dbml-table-objects__menu-list li + li {
+  margin-top: 4px;
+}
+
+.dbml-erd-viewer[data-scheme="light"] .dbml-table-objects__menu {
+  box-shadow:
+    0 14px 36px rgba(15, 23, 42, 0.16),
+    0 0 0 1px rgba(15, 23, 42, 0.06) inset;
+}
+
+.dbml-erd-viewer[data-scheme="light"] .dbml-table-objects__chip:hover,
+.dbml-erd-viewer[data-scheme="light"] .dbml-table-objects__chip.is-open {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.dbml-erd-viewer[data-scheme="light"] .dbml-table-objects__count {
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+}
+
+.dbml-sql-modal__panel {
+  width: min(920px, calc(100vw - 32px));
+}
+
+.dbml-sql-modal__tables {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0;
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dbml-muted);
+}
+
+.dbml-sql-modal__tables-label {
+  margin-right: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dbml-sql-modal__tables-item {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.dbml-sql-modal__tables-sep {
+  margin: 0 5px;
+  opacity: 0.55;
+}
+
+.dbml-sql-modal__table-chip {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--dbml-accent);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.dbml-sql-modal__table-chip:hover {
+  color: var(--dbml-text-strong);
+}
+
+.dbml-sql-modal__code {
+  margin: 0;
+  max-height: min(60vh, 640px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 8px;
+  background: var(--dbml-surface-2);
+  color: var(--dbml-text);
+  font-family: "IBM Plex Mono", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dbml-sql-modal__code code {
+  font: inherit;
+  white-space: inherit;
+}
+
+.dbml-sql-modal__table-link {
+  display: inline;
+  padding: 0 2px;
+  border: none;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--dbml-accent) 16%, transparent);
+  color: var(--dbml-accent);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.dbml-sql-modal__table-link:hover {
+  background: color-mix(in srgb, var(--dbml-accent) 28%, transparent);
 }
 
 .dbml-side__upload,
@@ -1710,13 +2312,9 @@ body.dbml-resizing-side * {
 
 .dbml-schema-tree {
   display: flex;
-  flex: 1;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  min-height: 0;
-  overflow: auto;
-  scrollbar-gutter: stable;
 }
 
 .dbml-schema-group {
@@ -2728,6 +3326,10 @@ body.dbml-resizing-side * {
   opacity: 0.85;
 }
 
+.dbml-search__shortcut--compact {
+  margin-top: 2px;
+}
+
 .dbml-search-select {
   display: flex;
   flex-direction: column;
@@ -2830,6 +3432,12 @@ body.dbml-resizing-side * {
   border-color: var(--dbml-accent-border);
   color: var(--dbml-accent);
   background: var(--dbml-accent-soft);
+}
+
+.dbml-toolbar__button.is-copied {
+  border-color: #22c55e;
+  color: #15803d;
+  background: rgba(34, 197, 94, 0.12);
 }
 
 .dbml-edge-info-control {

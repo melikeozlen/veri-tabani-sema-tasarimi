@@ -1,0 +1,178 @@
+// =============================================================================
+// CETAS ER Diyagramı — demo dosyası
+// Sol menüden "Dosya yükle" ile yükleyin; tüm özellikleri test edebilirsiniz.
+// =============================================================================
+
+Project cetas_demo {
+  database_type: 'MSSQL'
+  Note: '''
+    Örnek şema: tablolar, enum, TableGroup, ilişkiler, kayıt örnekleri
+    ve function / view / stored procedure / trigger tanımları.
+  '''
+}
+
+// --- Enum --------------------------------------------------------------------
+
+Enum crm.order_status {
+  draft [note: 'Taslak sipariş']
+  confirmed
+  shipped
+  cancelled
+}
+
+Enum crm.account_type {
+  individual
+  corporate
+}
+
+// --- TableGroup --------------------------------------------------------------
+
+TableGroup crm_core [color: #2563eb] {
+  crm.customers
+  crm.customer_individual_profiles
+  crm.orders
+  crm.order_lines
+}
+
+TableGroup sales_reports [color: #059669] {
+  sales.daily_revenue
+}
+
+// --- Tablolar (crm) ----------------------------------------------------------
+
+Table crm.customers {
+  id int [pk, increment, not null, note: 'Müşteri anahtarı']
+  code varchar(32) [unique, not null]
+  account_type crm.account_type [not null, default: 'individual']
+  email varchar(255) [unique]
+  is_active bit [not null, default: true]
+  created_at datetime2 [not null, default: `SYSUTCDATETIME()`]
+  Note: 'Müşteri ana tablosu'
+}
+
+Table crm.customer_individual_profiles {
+  customer_id int [pk, ref: > crm.customers.id, note: 'Bireysel profil — müşteriye 1-1']
+  first_name nvarchar(100) [not null]
+  last_name nvarchar(100) [not null]
+  birth_date date
+  national_id varchar(11) [unique]
+}
+
+Table crm.orders {
+  id bigint [pk, increment]
+  customer_id int [not null, ref: > crm.customers.id]
+  status crm.order_status [not null, default: 'draft']
+  order_date datetime2 [not null, default: `SYSUTCDATETIME()`]
+  total_amount decimal(18,2) [not null, default: 0]
+  Note: 'Sipariş başlığı'
+}
+
+Table crm.order_lines {
+  id bigint [pk, increment]
+  order_id bigint [not null, ref: > crm.orders.id]
+  product_code varchar(64) [not null]
+  quantity int [not null, default: 1]
+  unit_price decimal(18,2) [not null]
+}
+
+// --- Tablolar (sales) ----------------------------------------------------------
+
+Table sales.daily_revenue {
+  id int [pk, increment]
+  report_date date [not null, unique]
+  gross_amount decimal(18,2) [not null]
+  net_amount decimal(18,2) [not null]
+}
+
+// --- İlişkiler (Ref) -----------------------------------------------------------
+
+Ref: crm.customers.id < crm.orders.customer_id
+
+Ref crm_order_lines {
+  crm.orders.id < crm.order_lines.order_id
+}
+
+// Ters yazılmış 1-N (DDL export FK yönü testi)
+Ref: crm.customer_individual_profiles.customer_id > crm.customers.id
+
+// --- Örnek kayıtlar (Records) ------------------------------------------------
+
+records crm.customers(id, code, account_type, email, is_active) {
+  1, 'C-001', individual, 'alice@example.com', true
+  2, 'C-002', corporate, 'acme@example.com', true
+}
+
+records crm.customer_individual_profiles(customer_id, first_name, last_name, birth_date) {
+  1, 'Alice', 'Yılmaz', '1990-05-12'
+}
+
+records crm.orders(id, customer_id, status, total_amount) {
+  100, 1, confirmed, 1250.00
+  101, 2, draft, 480.50
+}
+
+// --- View bloğu (DBML) ---------------------------------------------------------
+
+View crm.v_active_customers {
+  SELECT c.id, c.code, c.email
+  FROM crm.customers c
+  WHERE c.is_active = 1;
+}
+
+// --- Ham SQL nesneleri (MSSQL) -----------------------------------------------
+// Sağ panel → Veritabanı nesneleri switch'leri ile test edin.
+
+CREATE VIEW crm.v_customer_orders AS
+SELECT
+  c.id AS customer_id,
+  c.code,
+  o.id AS order_id,
+  o.status,
+  o.total_amount
+FROM crm.customers c
+INNER JOIN crm.orders o ON o.customer_id = c.id;
+GO
+
+CREATE OR ALTER PROCEDURE crm.sp_refresh_customer_stats
+  @customer_id INT
+AS
+BEGIN
+  SET NOCOUNT ON;
+  SELECT @customer_id AS customer_id, COUNT(*) AS order_count
+  FROM crm.orders
+  WHERE customer_id = @customer_id;
+END;
+GO
+
+CREATE OR ALTER FUNCTION crm.fn_order_total(@order_id BIGINT)
+RETURNS DECIMAL(18,2)
+AS
+BEGIN
+  DECLARE @total DECIMAL(18,2);
+  SELECT @total = SUM(quantity * unit_price)
+  FROM crm.order_lines
+  WHERE order_id = @order_id;
+  RETURN ISNULL(@total, 0);
+END;
+GO
+
+CREATE OR ALTER TRIGGER crm.trg_orders_after_insert
+ON crm.orders
+AFTER INSERT
+AS
+BEGIN
+  SET NOCOUNT ON;
+  -- Demo trigger: gerçek iş kuralı yok
+  IF EXISTS (SELECT 1 FROM inserted WHERE total_amount < 0)
+    THROW 50001, 'Negatif tutar kabul edilmez', 1;
+END;
+GO
+
+// --- Senaryo insert (DDL sonrası manuel test) --------------------------------
+/*
+INSERT INTO crm.customers (code, account_type, email, is_active)
+VALUES (N'C-003', N'individual', N'test@example.com', 1);
+
+INSERT INTO crm.customer_individual_profiles (customer_id, first_name, last_name)
+VALUES (SCOPE_IDENTITY(), N'Test', N'Kullanıcı');
+*/
