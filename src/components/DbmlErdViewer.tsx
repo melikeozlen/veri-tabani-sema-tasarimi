@@ -34,7 +34,7 @@ import { loadPersistedSession, readStoredActiveSourceId, savePersistedSession } 
 import { updateSourceContent } from '../lib/auth';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
-import { dbmlModelToDdl, type DdlDialect } from '../lib/dbmlToDdl';
+import { dbmlModelToDdl, type DdlDialect, type DdlModel } from '../lib/dbmlToDdl';
 import {
   buildLinkedTableIdsByKind,
   collectObjectTableRefs,
@@ -173,6 +173,7 @@ interface TableNodeData extends Record<string, unknown> {
   searchScopes: SearchScope[];
   headerColor: string;
   onOpenTableData?: (tableId: string) => void;
+  onExportTable?: (table: DbmlTable, format: 'dbml' | 'ddl') => void;
   tableObjects?: Partial<Record<DbmlObjectKind, DbmlSqlObject[]>>;
   linkedTableIdsByKind?: Partial<Record<DbmlObjectKind, string[]>>;
   onOpenSqlObject?: (object: DbmlSqlObject) => void;
@@ -947,6 +948,53 @@ function tableToDbml(table: DbmlTable): string {
   return `${lines.join('\n')}\n`;
 }
 
+function inferDdlDialect(source: string): DdlDialect {
+  const match = source.match(/database_type\s*:\s*['"]([^'"]+)['"]/i);
+  if (match) {
+    const value = match[1].toLowerCase();
+    if (value.includes('postgres') || value.includes('pgsql')) return 'postgres';
+    if (value.includes('mssql') || value.includes('sqlserver') || value.includes('sql server')) {
+      return 'mssql';
+    }
+  }
+  return 'mssql';
+}
+
+function collectEnumsForTable(table: DbmlTable, enums: DbmlEnum[]): DbmlEnum[] {
+  const used = new Set<string>();
+  for (const field of table.fields) {
+    if (!resolveEnumValues(field.type, enums)) continue;
+    const normalized = field.type.trim();
+    let match = enums.find((item) => item.name === normalized);
+    if (!match) {
+      const shortName = normalized.includes('.') ? normalized.slice(normalized.lastIndexOf('.') + 1) : normalized;
+      const candidates = enums.filter(
+        (item) => item.name === normalized || item.name.endsWith(`.${shortName}`),
+      );
+      if (candidates.length === 1) match = candidates[0];
+    }
+    if (match) used.add(match.name);
+  }
+  return enums.filter((item) => used.has(item.name));
+}
+
+function buildTableDdlModel(table: DbmlTable, enums: DbmlEnum[], relations: DbmlRelation[]): DdlModel {
+  const tableRelations = relations.filter(
+    (relation) => relation.source.table === table.id || relation.target.table === table.id,
+  );
+
+  return {
+    tables: [table],
+    enums: collectEnumsForTable(table, enums),
+    relations: tableRelations.map((relation) => ({
+      source: relation.source,
+      target: relation.target,
+      sourceCardinality: relation.sourceCardinality,
+      targetCardinality: relation.targetCardinality,
+    })),
+  };
+}
+
 function downloadTextFile(content: string, fileName: string) {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -1278,6 +1326,123 @@ function TableObjectIcons({
   );
 }
 
+function TableExportMenu({
+  table,
+  onExport,
+}: {
+  table: DbmlTable;
+  onExport: (table: DbmlTable, format: 'dbml' | 'ddl') => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function closeMenu() {
+      setOpen(false);
+      setMenuAnchor(null);
+    }
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as HTMLElement;
+      if (target.closest('.dbml-table-export__trigger')) return;
+      if (menuRef.current?.contains(target)) return;
+      closeMenu();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') closeMenu();
+    }
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  const menuFlipUp =
+    menuAnchor !== null && menuAnchor.bottom + 88 > window.innerHeight - 12;
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`dbml-table-data-icon dbml-table-export__trigger nodrag nopan${open ? ' is-open' : ''}`}
+        aria-label={getMessage('table.export')}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        title={getMessage('table.export')}
+        onClick={(event) => {
+          event.stopPropagation();
+          event.preventDefault();
+          if (open) {
+            setOpen(false);
+            setMenuAnchor(null);
+            return;
+          }
+          setOpen(true);
+          setMenuAnchor(event.currentTarget.getBoundingClientRect());
+        }}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+          <path
+            d="M8 2.5v7M5.2 7.2 8 10l2.8-2.8M3 12.5h10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      {open &&
+        menuAnchor &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className={`dbml-table-export__menu${menuFlipUp ? ' is-flip-up' : ''}`}
+            role="menu"
+            aria-label={getMessage('table.exportMenu')}
+            style={{
+              top: menuFlipUp ? menuAnchor.top - 6 : menuAnchor.bottom + 6,
+              left: Math.min(Math.max(8, menuAnchor.right - 148), window.innerWidth - 156),
+            }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+                setMenuAnchor(null);
+                onExport(table, 'dbml');
+              }}
+            >
+              <strong>.dbml</strong>
+              <span>{getMessage('export.dbmlHint')}</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+                setMenuAnchor(null);
+                onExport(table, 'ddl');
+              }}
+            >
+              <strong>.ddl</strong>
+              <span>{getMessage('table.exportDdlHint')}</span>
+            </button>
+          </div>,
+          getViewerPortalRoot(),
+        )}
+    </>
+  );
+}
+
 const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
   const {
     table,
@@ -1287,6 +1452,7 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
     searchScopes,
     headerColor,
     onOpenTableData,
+    onExportTable,
     tableObjects,
     linkedTableIdsByKind,
     onOpenSqlObject,
@@ -1374,29 +1540,7 @@ const TableNode = memo(function TableNode({ data }: NodeProps<TableFlowNode>) {
                 <path d="M2 5.5h12M6 5.5v8" fill="none" stroke="currentColor" strokeWidth="1.4" />
               </svg>
             </button>
-            <button
-              type="button"
-              className="dbml-table-data-icon nodrag nopan"
-              aria-label={getMessage('table.exportDbml')}
-              title={getMessage('table.exportDbml')}
-              onClick={(event) => {
-                event.stopPropagation();
-                event.preventDefault();
-                downloadTextFile(tableToDbml(table), `${table.fullName.replaceAll('.', '_')}.dbml`);
-              }}
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
-                <path
-                  d="M8 2.5v7M5.2 7.2 8 10l2.8-2.8M3 12.5h10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
+            <TableExportMenu table={table} onExport={(item, format) => onExportTable?.(item, format)} />
           </div>
         </div>
         <div className="dbml-table-node__header-actions">
@@ -3352,6 +3496,28 @@ function DbmlErdViewerContent({
     setDataModalTableId(tableId);
   }, []);
 
+  const handleExportTable = useCallback(
+    (table: DbmlTable, format: 'dbml' | 'ddl') => {
+      const baseName = table.fullName.replaceAll('.', '_');
+      if (format === 'dbml') {
+        downloadTextFile(tableToDbml(table), `${baseName}.dbml`);
+        return;
+      }
+
+      try {
+        const parsed = parseDbml(dbml);
+        const dialect = inferDdlDialect(dbml);
+        const model: DdlModel = buildTableDdlModel(table, parsed.enums, parsed.relations);
+        const sql = dbmlModelToDdl(model, dialect, table.fullName);
+        downloadTextFile(sql, `${baseName}.ddl`);
+        setError(null);
+      } catch {
+        setError(t('export.ddlFailed'));
+      }
+    },
+    [dbml, t],
+  );
+
   const dataModalTable = useMemo(() => {
     if (!dataModalTableId) return null;
     return nodes.find((node) => node.id === dataModalTableId)?.data ?? null;
@@ -3429,6 +3595,7 @@ function DbmlErdViewerContent({
           searchScopes,
           headerColor: headerColorForTable(node.data.table, groupBy, corporateTheme),
           onOpenTableData: openTableData,
+          onExportTable: handleExportTable,
           tableObjects,
           linkedTableIdsByKind: buildLinkedTableIdsByKind(tableObjects, tableRefs),
           onOpenSqlObject: openSqlObject,
@@ -3444,6 +3611,7 @@ function DbmlErdViewerContent({
     deferredSearchTerm,
     groupBy,
     handleObjectKindHover,
+    handleExportTable,
     hiddenTableIds,
     hoverConnectedIds,
     hoveredObjectLinkIds,

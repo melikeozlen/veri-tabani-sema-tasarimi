@@ -249,7 +249,10 @@ const messages = {
 
     'table.note': 'Tablo notu',
     'table.viewData': 'Tablo verisini görüntüle',
+    'table.export': 'Tabloyu indir',
+    'table.exportMenu': 'İndirme formatı',
     'table.exportDbml': 'Tabloyu .dbml olarak indir',
+    'table.exportDdlHint': 'Ham DDL (.ddl)',
 
     'empty.noTableGroup': 'DBML içinde TableGroup yok.',
     'empty.noMatch': 'Eşleşen şema/tablo yok.',
@@ -612,7 +615,10 @@ const messages = {
 
     'table.note': 'Table note',
     'table.viewData': 'View table data',
+    'table.export': 'Download table',
+    'table.exportMenu': 'Download format',
     'table.exportDbml': 'Download table as .dbml',
+    'table.exportDdlHint': 'Raw DDL (.ddl)',
 
     'empty.noTableGroup': 'No TableGroup in this DBML.',
     'empty.noMatch': 'No matching schema/table.',
