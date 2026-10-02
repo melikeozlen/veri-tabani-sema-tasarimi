@@ -2525,6 +2525,52 @@ function sourceDisplayName(fileName: string): string {
   return fileName.replace(/\.(dbml|txt|sql)$/i, '');
 }
 
+/** Uzun metin: title + taşınca hover’da kaydırma. */
+function MarqueeText({
+  text,
+  className,
+  title,
+}: {
+  text: string;
+  className?: string;
+  title?: string;
+}) {
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const railRef = useRef<HTMLSpanElement>(null);
+  const [overflow, setOverflow] = useState(false);
+
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    const rail = railRef.current;
+    if (!wrap || !rail) return;
+
+    function measure() {
+      if (!wrap || !rail) return;
+      const delta = rail.scrollWidth - wrap.clientWidth;
+      const isOverflow = delta > 1;
+      setOverflow(isOverflow);
+      wrap.style.setProperty('--marquee-shift', isOverflow ? `${-delta}px` : '0px');
+    }
+
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(wrap);
+    return () => observer.disconnect();
+  }, [text]);
+
+  return (
+    <span
+      ref={wrapRef}
+      className={`${className ?? ''}${overflow ? ' is-overflow' : ''}`.trim()}
+      title={title ?? text}
+    >
+      <span ref={railRef} className="dbml-marquee__rail">
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function toDbmlFileName(fileName: string): string {
   const base = fileName.replace(/\.(dbml|txt|sql)$/i, '') || 'import';
   return `${base}.dbml`;
@@ -4852,9 +4898,9 @@ function DbmlErdViewerContent({
                                 pendingActiveSourceIdRef.current = source.id;
                                 setActiveSourceId(source.id);
                               }}
-                              title={source.url ?? source.name}
+                              title={source.name}
                             >
-                              <span className="dbml-file-list__name">{source.name}</span>
+                              <MarqueeText text={source.name} className="dbml-file-list__name" />
                               {(source.kind !== 'drive' || edited) && (
                                 <span className="dbml-file-list__meta">
                                   {source.kind === 'drive'

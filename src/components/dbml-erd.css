@@ -2279,9 +2279,57 @@ body.dbml-resizing-side * {
 }
 
 .dbml-file-list__name {
+  position: relative;
   color: var(--dbml-text-strong);
   font-size: 12px;
   font-weight: 650;
+  --marquee-shift: 0px;
+  text-overflow: clip;
+}
+
+.dbml-file-list__name .dbml-marquee__rail {
+  display: inline-block;
+  white-space: nowrap;
+  vertical-align: bottom;
+  will-change: transform;
+}
+
+/* Taşmayan veya hover yokken: tek satır + ellipsis hissi için maske */
+.dbml-file-list__name.is-overflow:not(:hover) {
+  mask-image: linear-gradient(90deg, #000 78%, transparent);
+}
+
+.dbml-file-list__item:hover .dbml-file-list__name.is-overflow,
+.dbml-file-list__item:focus-visible .dbml-file-list__name.is-overflow {
+  mask-image: none;
+}
+
+.dbml-file-list__item:hover .dbml-file-list__name.is-overflow .dbml-marquee__rail,
+.dbml-file-list__item:focus-visible .dbml-file-list__name.is-overflow .dbml-marquee__rail {
+  animation: dbml-name-marquee 2.4s ease-in-out infinite alternate;
+}
+
+@keyframes dbml-name-marquee {
+  0%,
+  8% {
+    transform: translateX(0);
+  }
+  92%,
+  100% {
+    transform: translateX(var(--marquee-shift));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dbml-file-list__item:hover .dbml-file-list__name.is-overflow .dbml-marquee__rail,
+  .dbml-file-list__item:focus-visible .dbml-file-list__name.is-overflow .dbml-marquee__rail {
+    animation: none;
+  }
+
+  .dbml-file-list__name.is-overflow:not(:hover) {
+    mask-image: none;
+    text-overflow: ellipsis;
+  }
 }
 
 .dbml-file-list__meta {
