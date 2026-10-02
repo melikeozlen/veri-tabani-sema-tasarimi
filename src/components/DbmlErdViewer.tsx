@@ -35,7 +35,9 @@ import { updateSourceContent } from '../lib/auth';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
 import { dbmlModelToDdl, type DdlDialect, type DdlModel } from '../lib/dbmlToDdl';
-import type { SqlImportDialectChoice } from '../lib/sqlToDbml';
+import type { SqlImportDialect } from '../lib/sqlToDbml';
+import { decodeSqlBytes } from '../lib/sqlToDbml';
+import { convertSqlInWorker } from '../lib/sqlToDbmlClient';
 import {
   buildLinkedTableIdsByKind,
   collectObjectTableRefs,
@@ -357,9 +359,12 @@ function findClosingBrace(source: string, openingIndex: number): number {
 
 function extractNamedBlocks(source: string): NamedBlock[] {
   const blocks: NamedBlock[] = [];
-  // İsimden sonra isteğe bağlı `as alias` ve `[color: ...]` gibi ayarlar gelebilir.
-  const pattern =
-    /\b(TableGroup|Table|Enum)\s+("(?:\\.|[^"])+"|[\w.-]+)(?:\s+as\s+("(?:\\.|[^"])+"|[\w.-]+))?(?:\s*\[([\s\S]*?)\])?\s*\{/g;
+  // SQL import çıktısı: Table "dbo"."users" { ... } — noktalı tırnaklı isimleri de kabul et
+  const nameToken = String.raw`(?:"(?:\\.|[^"])+"|[\w]+)(?:\s*\.\s*(?:"(?:\\.|[^"])+"|[\w]+))*`;
+  const pattern = new RegExp(
+    String.raw`\b(TableGroup|Table|Enum)\s+(${nameToken})(?:\s+as\s+(${nameToken}))?(?:\s*\[([\s\S]*?)\])?\s*\{`,
+    'g',
+  );
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(source)) !== null) {
@@ -369,8 +374,8 @@ function extractNamedBlocks(source: string): NamedBlock[] {
 
     blocks.push({
       kind: match[1] as 'TableGroup' | 'Table' | 'Enum',
-      name: unquote(match[2]),
-      alias: match[3] ? unquote(match[3]) : undefined,
+      name: splitQualifiedName(match[2]).join('.'),
+      alias: match[3] ? splitQualifiedName(match[3]).join('.') : undefined,
       settings: match[4]?.trim() || undefined,
       body: source.slice(openingIndex + 1, closingIndex),
     });
@@ -2529,16 +2534,25 @@ function isSqlFileName(name: string): boolean {
   return name.toLowerCase().endsWith('.sql');
 }
 
+function dialectLabel(dialect: SqlImportDialect): string {
+  if (dialect === 'mysql') return 'MySQL';
+  if (dialect === 'postgres') return 'PostgreSQL';
+  return 'MSSQL';
+}
+
+function yieldToUi(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
+}
+
 async function convertSqlContent(
   sql: string,
-  dialect: SqlImportDialectChoice,
-): Promise<string> {
-  const { sqlToDbml, formatSqlImportError } = await import('../lib/sqlToDbml');
-  try {
-    return sqlToDbml(sql, dialect).dbml;
-  } catch (caught) {
-    throw new Error(formatSqlImportError(caught));
-  }
+  onDetected?: (dialect: SqlImportDialect) => void,
+): Promise<{ dbml: string; dialect: SqlImportDialect }> {
+  return convertSqlInWorker(sql, { onDetected });
 }
 
 const OPEN_SOURCE_FOLDERS_KEY = 'dbml-erd-open-source-folders';
@@ -2690,7 +2704,6 @@ function DbmlErdViewerContent({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sqlFileInputRef = useRef<HTMLInputElement>(null);
   const uploadMenuRef = useRef<HTMLDivElement | null>(null);
-  const pendingSqlDialectRef = useRef<SqlImportDialectChoice>('auto');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pendingSearchFocusRef = useRef(false);
   const [sessionReady, setSessionReady] = useState(false);
@@ -2856,6 +2869,7 @@ function DbmlErdViewerContent({
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
   const [sqlImporting, setSqlImporting] = useState(false);
+  const [sqlImportDialect, setSqlImportDialect] = useState<string | null>(null);
   const [pngExporting, setPngExporting] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
@@ -3929,16 +3943,34 @@ function DbmlErdViewerContent({
     const reader = new FileReader();
     reader.onload = () => {
       void (async () => {
-        const raw = typeof reader.result === 'string' ? reader.result : '';
+        const buffer = reader.result;
+        if (!(buffer instanceof ArrayBuffer)) {
+          setLinkError(t('sources.uploadOnly'));
+          return;
+        }
+        const bytes = new Uint8Array(buffer);
+        const raw =
+          mode === 'sql'
+            ? decodeSqlBytes(bytes)
+            : new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
         let content = raw;
         let sourceName = file.name;
+        let detectedDialect: SqlImportDialect | null = null;
 
         if (mode === 'sql') {
+          setLinkError(null);
+          setSqlImportDialect(null);
           setSqlImporting(true);
           try {
-            const dialect = pendingSqlDialectRef.current;
-            content = await convertSqlContent(raw, dialect);
+            await yieldToUi();
+            const converted = await convertSqlContent(raw, (guessed) => {
+              setSqlImportDialect(dialectLabel(guessed));
+            });
+            content = converted.dbml;
+            detectedDialect = converted.dialect;
+            setSqlImportDialect(dialectLabel(converted.dialect));
             sourceName = toDbmlFileName(file.name);
+            await yieldToUi();
           } catch (caught) {
             setLinkError(
               t('sources.sqlImportFailed', {
@@ -3948,6 +3980,7 @@ function DbmlErdViewerContent({
             return;
           } finally {
             setSqlImporting(false);
+            setSqlImportDialect(null);
           }
         }
 
@@ -3955,7 +3988,9 @@ function DbmlErdViewerContent({
         const source: DbmlSource = {
           id,
           name: sourceName,
-          label: sourceDisplayName(sourceName),
+          label: detectedDialect
+            ? `${sourceDisplayName(sourceName)} (${dialectLabel(detectedDialect)})`
+            : sourceDisplayName(sourceName),
           content,
           kind: 'upload',
         };
@@ -3965,7 +4000,7 @@ function DbmlErdViewerContent({
         setActiveSourceId(id);
       })();
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
     event.target.value = '';
   }
 
@@ -3975,8 +4010,7 @@ function DbmlErdViewerContent({
     fileInputRef.current?.click();
   }
 
-  function openSqlUpload(dialect: SqlImportDialectChoice) {
-    pendingSqlDialectRef.current = dialect;
+  function openSqlUpload() {
     setUploadMenuOpen(false);
     setLinkFormOpen(false);
     queueMicrotask(() => sqlFileInputRef.current?.click());
@@ -3985,7 +4019,6 @@ function DbmlErdViewerContent({
   function openLinkForm() {
     setUploadMenuOpen(false);
     setLinkFormOpen(true);
-    pendingSqlDialectRef.current = 'auto';
   }
 
   function handleExport() {
@@ -4388,24 +4421,39 @@ function DbmlErdViewerContent({
         throw new Error(t('error.fetchFile', { status: response.status }));
       }
 
-      const raw = await response.text();
+      const buffer = await response.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      const fileName = fileNameFromUrl(trimmed);
+      const raw = isSqlFileName(fileName)
+        ? decodeSqlBytes(bytes)
+        : new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
       if (!raw.trim()) {
         throw new Error(t('sources.linkEmpty'));
       }
 
-      const fileName = fileNameFromUrl(trimmed);
       let content = raw;
       let sourceName = fileName;
       if (isSqlFileName(fileName)) {
+        setSqlImporting(true);
+        setSqlImportDialect(null);
         try {
-          content = await convertSqlContent(raw, pendingSqlDialectRef.current);
+          await yieldToUi();
+          const converted = await convertSqlContent(raw, (guessed) => {
+            setSqlImportDialect(dialectLabel(guessed));
+          });
+          content = converted.dbml;
           sourceName = toDbmlFileName(fileName);
+          setSqlImportDialect(dialectLabel(converted.dialect));
+          await yieldToUi();
         } catch (caught) {
           throw new Error(
             t('sources.sqlImportFailed', {
               detail: caught instanceof Error ? caught.message : String(caught),
             }),
           );
+        } finally {
+          setSqlImporting(false);
+          setSqlImportDialect(null);
         }
       }
 
@@ -4642,19 +4690,10 @@ function DbmlErdViewerContent({
                     <button
                       type="button"
                       role="menuitem"
-                      onClick={() => openSqlUpload('mysql')}
+                      onClick={openSqlUpload}
                       disabled={sqlImporting}
                     >
-                      <strong>{t('sources.sqlDialectMysql')}</strong>
-                      <span>{t('sources.uploadSqlHint')}</span>
-                    </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => openSqlUpload('postgres')}
-                      disabled={sqlImporting}
-                    >
-                      <strong>{t('sources.sqlDialectPostgres')}</strong>
+                      <strong>{t('sources.uploadSql')}</strong>
                       <span>{t('sources.uploadSqlHint')}</span>
                     </button>
                     <button
@@ -4685,11 +4724,8 @@ function DbmlErdViewerContent({
               />
             </div>
 
-            {(linkFormOpen || linkError || sourcesError || sqlImporting) && (
+            {(linkFormOpen || linkError || sourcesError) && (
               <div id="dbml-source-add-panel" className="dbml-side-toolbar__add">
-                {sqlImporting && (
-                  <p className="dbml-link-form__hint">{t('sources.sqlImporting')}</p>
-                )}
                 {linkFormOpen && (
                   <div className="dbml-link-form">
                     <input
@@ -4724,12 +4760,20 @@ function DbmlErdViewerContent({
             )}
           </div>
 
-          {sourcesLoading && (
+          {(sourcesLoading || sqlImporting) && (
             <div className="dbml-sources-loader" role="status" aria-live="polite">
               <span className="dbml-sources-loader__spinner" aria-hidden="true" />
               <div className="dbml-sources-loader__text">
-                <strong>{t('sources.loadingTitle')}</strong>
-                <span>{t('sources.loadingHint')}</span>
+                <strong>
+                  {sqlImporting ? t('sources.sqlImportingTitle') : t('sources.loadingTitle')}
+                </strong>
+                <span>
+                  {sqlImporting
+                    ? sqlImportDialect
+                      ? t('sources.sqlImportingDetected', { dialect: sqlImportDialect })
+                      : t('sources.sqlImportingHint')
+                    : t('sources.loadingHint')}
+                </span>
               </div>
             </div>
           )}
@@ -4953,12 +4997,20 @@ function DbmlErdViewerContent({
       </aside>
 
       <div className="dbml-canvas">
-        {sourcesLoading && (
+        {(sourcesLoading || sqlImporting) && (
           <div className="dbml-canvas-loader" role="status" aria-live="polite">
             <div className="dbml-canvas-loader__card">
               <span className="dbml-sources-loader__spinner dbml-sources-loader__spinner--lg" aria-hidden="true" />
-              <strong>{t('sources.loadingTitle')}</strong>
-              <span>{t('sources.loadingCanvas')}</span>
+              <strong>
+                {sqlImporting ? t('sources.sqlImportingTitle') : t('sources.loadingTitle')}
+              </strong>
+              <span>
+                {sqlImporting
+                  ? sqlImportDialect
+                    ? t('sources.sqlImportingDetected', { dialect: sqlImportDialect })
+                    : t('sources.sqlImportingHint')
+                  : t('sources.loadingCanvas')}
+              </span>
             </div>
           </div>
         )}

@@ -41,3 +41,7 @@ service-account*.json
 # Test / coverage
 coverage/
 *.lcov
+
+# Local DB dumps (do not commit)
+/*.sql
+CRM_*.sql
