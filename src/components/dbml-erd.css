@@ -1714,6 +1714,64 @@ body.dbml-resizing-side * {
   background: var(--dbml-accent-soft);
 }
 
+.dbml-side__upload-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.dbml-side__upload-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 80;
+  min-width: 188px;
+  padding: 4px;
+  border: 1px solid var(--dbml-border);
+  border-radius: 8px;
+  background: var(--dbml-panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dbml-side__upload-dropdown button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dbml-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dbml-side__upload-dropdown button:hover:not(:disabled) {
+  background: var(--dbml-hover);
+  color: var(--dbml-text-strong);
+}
+
+.dbml-side__upload-dropdown button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dbml-side__upload-dropdown strong {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dbml-side__upload-dropdown span {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.72;
+}
+
 .dbml-side-toolbar__add {
   display: flex;
   flex-direction: column;
@@ -1747,6 +1805,11 @@ body.dbml-resizing-side * {
 .dbml-side__upload:hover {
   border-color: var(--dbml-accent);
   background: var(--dbml-accent-soft);
+}
+
+.dbml-side__upload:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .dbml-side__export:hover:not(:disabled),

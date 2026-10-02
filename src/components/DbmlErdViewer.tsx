@@ -35,6 +35,7 @@ import { updateSourceContent } from '../lib/auth';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { useI18n, getMessage, type MessageKey } from '../lib/i18n';
 import { dbmlModelToDdl, type DdlDialect, type DdlModel } from '../lib/dbmlToDdl';
+import type { SqlImportDialectChoice } from '../lib/sqlToDbml';
 import {
   buildLinkedTableIdsByKind,
   collectObjectTableRefs,
@@ -2219,18 +2220,17 @@ function FolderIcon() {
   );
 }
 
-function FilePlusIcon() {
+function UploadIcon() {
   return (
     <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
       <path
-        d="M8 3.5h5.5L18.5 8.5V20a1.5 1.5 0 0 1-1.5 1.5H8A1.5 1.5 0 0 1 6.5 20V5A1.5 1.5 0 0 1 8 3.5Z"
+        d="M12 16.5V5.5M8.2 8.8 12 5l3.8 3.8M5 18.5h14"
         fill="none"
         stroke="currentColor"
         strokeWidth="1.7"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
-      <path d="M13.5 3.5V8.5H18.5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-      <path d="M12 12v5M9.5 14.5h5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }
@@ -2510,14 +2510,35 @@ function isAllowedDbmlUrl(rawUrl: string): boolean {
     const parsed = new URL(rawUrl.trim());
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
     const path = parsed.pathname.toLowerCase();
-    return path.endsWith('.dbml') || path.endsWith('.txt');
+    return path.endsWith('.dbml') || path.endsWith('.txt') || path.endsWith('.sql');
   } catch {
     return false;
   }
 }
 
 function sourceDisplayName(fileName: string): string {
-  return fileName.replace(/\.(dbml|txt)$/i, '');
+  return fileName.replace(/\.(dbml|txt|sql)$/i, '');
+}
+
+function toDbmlFileName(fileName: string): string {
+  const base = fileName.replace(/\.(dbml|txt|sql)$/i, '') || 'import';
+  return `${base}.dbml`;
+}
+
+function isSqlFileName(name: string): boolean {
+  return name.toLowerCase().endsWith('.sql');
+}
+
+async function convertSqlContent(
+  sql: string,
+  dialect: SqlImportDialectChoice,
+): Promise<string> {
+  const { sqlToDbml, formatSqlImportError } = await import('../lib/sqlToDbml');
+  try {
+    return sqlToDbml(sql, dialect).dbml;
+  } catch (caught) {
+    throw new Error(formatSqlImportError(caught));
+  }
 }
 
 const OPEN_SOURCE_FOLDERS_KEY = 'dbml-erd-open-source-folders';
@@ -2667,6 +2688,9 @@ function DbmlErdViewerContent({
   tRef.current = t;
   const resolvedTitle = title ?? t('app.defaultTitle');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sqlFileInputRef = useRef<HTMLInputElement>(null);
+  const uploadMenuRef = useRef<HTMLDivElement | null>(null);
+  const pendingSqlDialectRef = useRef<SqlImportDialectChoice>('auto');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const pendingSearchFocusRef = useRef(false);
   const [sessionReady, setSessionReady] = useState(false);
@@ -2797,10 +2821,8 @@ function DbmlErdViewerContent({
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('dbml-erd-minimap-compact') === '1';
   });
-  const [sourceAddOpen, setSourceAddOpen] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem('dbml-erd-source-add-open') === '1';
-  });
+  const [uploadMenuOpen, setUploadMenuOpen] = useState(false);
+  const [linkFormOpen, setLinkFormOpen] = useState(false);
   const [rightSideWidth, setRightSideWidth] = useState(() => {
     if (typeof window === 'undefined') return 280;
     const saved = Number(window.localStorage.getItem('dbml-erd-right-width'));
@@ -2833,6 +2855,7 @@ function DbmlErdViewerContent({
   const [linkUrl, setLinkUrl] = useState('');
   const [linkError, setLinkError] = useState<string | null>(null);
   const [linkLoading, setLinkLoading] = useState(false);
+  const [sqlImporting, setSqlImporting] = useState(false);
   const [pngExporting, setPngExporting] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
@@ -2927,10 +2950,6 @@ function DbmlErdViewerContent({
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-minimap-compact', minimapCompact ? '1' : '0');
   }, [minimapCompact]);
-
-  useEffect(() => {
-    window.localStorage.setItem('dbml-erd-source-add-open', sourceAddOpen ? '1' : '0');
-  }, [sourceAddOpen]);
 
   useEffect(() => {
     window.localStorage.setItem('dbml-erd-legend-open', legendOpen ? '1' : '0');
@@ -3095,6 +3114,28 @@ function DbmlErdViewerContent({
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [downloadMenuOpen]);
+
+  useEffect(() => {
+    if (!uploadMenuOpen) return;
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (uploadMenuRef.current?.contains(target)) return;
+      setUploadMenuOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setUploadMenuOpen(false);
+    }
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [uploadMenuOpen]);
 
   useEffect(() => {
     function focusSearchInput() {
@@ -3866,34 +3907,85 @@ function DbmlErdViewerContent({
     });
   }
 
-  function handleUpload(event: ChangeEvent<HTMLInputElement>) {
+  function handleUpload(event: ChangeEvent<HTMLInputElement>, mode: 'dbml' | 'sql') {
     const file = event.target.files?.[0];
     if (!file) return;
 
     const lowerName = file.name.toLowerCase();
-    if (!lowerName.endsWith('.dbml') && !lowerName.endsWith('.txt')) {
-      setLinkError(t('sources.uploadOnly'));
+    const isDbmlOrTxt = lowerName.endsWith('.dbml') || lowerName.endsWith('.txt');
+    const isSql = isSqlFileName(file.name);
+
+    if (mode === 'dbml' && !isDbmlOrTxt) {
+      setLinkError(t('sources.uploadOnlyDbml'));
+      event.target.value = '';
+      return;
+    }
+    if (mode === 'sql' && !isSql) {
+      setLinkError(t('sources.uploadOnlySql'));
       event.target.value = '';
       return;
     }
 
     const reader = new FileReader();
     reader.onload = () => {
-      const content = typeof reader.result === 'string' ? reader.result : '';
-      const id = `upload:${file.name}`;
-      const source: DbmlSource = {
-        id,
-        name: file.name,
-        label: sourceDisplayName(file.name),
-        content,
-        kind: 'upload',
-      };
-      setLinkError(null);
-      setUploadedSources((current) => [source, ...current.filter((item) => item.id !== id)]);
-      setActiveSourceId(id);
+      void (async () => {
+        const raw = typeof reader.result === 'string' ? reader.result : '';
+        let content = raw;
+        let sourceName = file.name;
+
+        if (mode === 'sql') {
+          setSqlImporting(true);
+          try {
+            const dialect = pendingSqlDialectRef.current;
+            content = await convertSqlContent(raw, dialect);
+            sourceName = toDbmlFileName(file.name);
+          } catch (caught) {
+            setLinkError(
+              t('sources.sqlImportFailed', {
+                detail: caught instanceof Error ? caught.message : String(caught),
+              }),
+            );
+            return;
+          } finally {
+            setSqlImporting(false);
+          }
+        }
+
+        const id = `upload:${sourceName}`;
+        const source: DbmlSource = {
+          id,
+          name: sourceName,
+          label: sourceDisplayName(sourceName),
+          content,
+          kind: 'upload',
+        };
+        setLinkError(null);
+        setLinkFormOpen(false);
+        setUploadedSources((current) => [source, ...current.filter((item) => item.id !== id)]);
+        setActiveSourceId(id);
+      })();
     };
     reader.readAsText(file);
     event.target.value = '';
+  }
+
+  function openDbmlUpload() {
+    setUploadMenuOpen(false);
+    setLinkFormOpen(false);
+    fileInputRef.current?.click();
+  }
+
+  function openSqlUpload(dialect: SqlImportDialectChoice) {
+    pendingSqlDialectRef.current = dialect;
+    setUploadMenuOpen(false);
+    setLinkFormOpen(false);
+    queueMicrotask(() => sqlFileInputRef.current?.click());
+  }
+
+  function openLinkForm() {
+    setUploadMenuOpen(false);
+    setLinkFormOpen(true);
+    pendingSqlDialectRef.current = 'auto';
   }
 
   function handleExport() {
@@ -4296,16 +4388,31 @@ function DbmlErdViewerContent({
         throw new Error(t('error.fetchFile', { status: response.status }));
       }
 
-      const content = await response.text();
-      if (!content.trim()) {
+      const raw = await response.text();
+      if (!raw.trim()) {
         throw new Error(t('sources.linkEmpty'));
       }
 
       const fileName = fileNameFromUrl(trimmed);
+      let content = raw;
+      let sourceName = fileName;
+      if (isSqlFileName(fileName)) {
+        try {
+          content = await convertSqlContent(raw, pendingSqlDialectRef.current);
+          sourceName = toDbmlFileName(fileName);
+        } catch (caught) {
+          throw new Error(
+            t('sources.sqlImportFailed', {
+              detail: caught instanceof Error ? caught.message : String(caught),
+            }),
+          );
+        }
+      }
+
       const id = `link:${trimmed}`;
       const source: DbmlSource = {
         id,
-        name: fileName,
+        name: sourceName,
         label: trimmed,
         content,
         kind: 'link',
@@ -4504,56 +4611,112 @@ function DbmlErdViewerContent({
                   {sourcesLoading ? t('sources.refreshing') : t('sources.refresh')}
                 </button>
               )}
-              <button
-                type="button"
-                className={`dbml-side__export dbml-side__add-toggle${sourceAddOpen ? ' is-active' : ''}`}
-                onClick={() => setSourceAddOpen((current) => !current)}
-                title={sourceAddOpen ? t('sources.addPanelHide') : t('sources.addPanelShow')}
-                aria-label={sourceAddOpen ? t('sources.addPanelHide') : t('sources.addPanelShow')}
-                aria-expanded={sourceAddOpen}
-                aria-controls="dbml-source-add-panel"
-              >
-                <FilePlusIcon />
-              </button>
-            </div>
-
-            {sourceAddOpen && (
-              <div id="dbml-source-add-panel" className="dbml-side-toolbar__add">
+              <div className="dbml-side__upload-menu" ref={uploadMenuRef}>
                 <button
                   type="button"
-                  className="dbml-side__upload"
-                  onClick={() => fileInputRef.current?.click()}
+                  className={`dbml-side__export dbml-side__add-toggle${uploadMenuOpen || linkFormOpen ? ' is-active' : ''}`}
+                  onClick={() => setUploadMenuOpen((open) => !open)}
+                  title={t('sources.uploadMenuTitle')}
+                  aria-label={t('sources.uploadMenuTitle')}
+                  aria-haspopup="menu"
+                  aria-expanded={uploadMenuOpen}
+                  disabled={sqlImporting}
                 >
-                  {t('sources.upload')}
+                  <UploadIcon />
                 </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".dbml,.txt,text/plain"
-                  hidden
-                  onChange={handleUpload}
-                />
+                {uploadMenuOpen && (
+                  <div
+                    className="dbml-side__upload-dropdown"
+                    role="menu"
+                    aria-label={t('sources.uploadMenu')}
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={openDbmlUpload}
+                      disabled={sqlImporting}
+                    >
+                      <strong>{t('sources.uploadDbml')}</strong>
+                      <span>{t('sources.uploadDbmlHint')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => openSqlUpload('mysql')}
+                      disabled={sqlImporting}
+                    >
+                      <strong>{t('sources.sqlDialectMysql')}</strong>
+                      <span>{t('sources.uploadSqlHint')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => openSqlUpload('postgres')}
+                      disabled={sqlImporting}
+                    >
+                      <strong>{t('sources.sqlDialectPostgres')}</strong>
+                      <span>{t('sources.uploadSqlHint')}</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={openLinkForm}
+                      disabled={sqlImporting}
+                    >
+                      <strong>{t('sources.uploadLink')}</strong>
+                      <span>{t('sources.uploadLinkHint')}</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".dbml,.txt,text/plain"
+                hidden
+                onChange={(event) => handleUpload(event, 'dbml')}
+              />
+              <input
+                ref={sqlFileInputRef}
+                type="file"
+                accept=".sql,application/sql,text/plain"
+                hidden
+                onChange={(event) => handleUpload(event, 'sql')}
+              />
+            </div>
 
-                <div className="dbml-link-form">
-                  <input
-                    value={linkUrl}
-                    onChange={(event) => {
-                      setLinkUrl(event.target.value);
-                      if (linkError) setLinkError(null);
-                    }}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        void handleAddLink();
-                      }
-                    }}
-                    placeholder={t('sources.linkPlaceholder')}
-                    aria-label={t('sources.linkAria')}
-                  />
-                  <button type="button" onClick={() => void handleAddLink()} disabled={linkLoading}>
-                    {linkLoading ? t('sources.adding') : t('sources.add')}
-                  </button>
-                </div>
+            {(linkFormOpen || linkError || sourcesError || sqlImporting) && (
+              <div id="dbml-source-add-panel" className="dbml-side-toolbar__add">
+                {sqlImporting && (
+                  <p className="dbml-link-form__hint">{t('sources.sqlImporting')}</p>
+                )}
+                {linkFormOpen && (
+                  <div className="dbml-link-form">
+                    <input
+                      value={linkUrl}
+                      onChange={(event) => {
+                        setLinkUrl(event.target.value);
+                        if (linkError) setLinkError(null);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          void handleAddLink();
+                        }
+                      }}
+                      placeholder={t('sources.linkPlaceholder')}
+                      aria-label={t('sources.linkAria')}
+                      disabled={sqlImporting || linkLoading}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleAddLink()}
+                      disabled={linkLoading || sqlImporting}
+                    >
+                      {linkLoading || sqlImporting ? t('sources.adding') : t('sources.add')}
+                    </button>
+                  </div>
+                )}
                 {(linkError || sourcesError) && (
                   <div className="dbml-link-form__error">{linkError || sourcesError}</div>
                 )}
